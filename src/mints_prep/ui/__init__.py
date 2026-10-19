@@ -1,0 +1,1 @@
+# tkinterベースGUI（次段で実装。ConfirmationGateを経由しない変更処理呼び出しを禁止する）

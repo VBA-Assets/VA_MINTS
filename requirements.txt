@@ -1,0 +1,37 @@
+# VA mints 依存ライブラリ
+# いずれもローカル完結型（外部ネットワーク通信を内包しないことを選定条件とする。CLAUDE.md参照）
+
+# PDF：暗号化検出・寸法検証・メタデータ読み取り
+pikepdf>=9.0
+
+# PDF：テキスト/オブジェクト解析（4.6墨消し完全性の検証で使用。塗りつぶし矩形・
+# ハイライト注釈の座標と下層テキストの座標を照合するため）
+pdfplumber>=0.11
+
+# PDF：生成・スタンプ・結合（4.7証拠番号処理で使用）
+pypdf>=4.0
+reportlab>=4.0
+
+# 画像処理・Exif読み取り
+Pillow>=10.0
+
+# 音声・動画タグ読み取り（ffmpeg不要の純Python実装）
+mutagen>=1.47
+
+# Office文書プロパティ読み取り（変換自体はv2以降。メタデータ検出のみv1で使用）
+python-docx>=1.1
+openpyxl>=3.1
+python-pptx>=0.6.23
+
+# 設定ファイル読み込み
+PyYAML>=6.0
+
+# テスト
+pytest>=8.0
+
+# 実行ファイル化（配布用。Python環境を持たない利用者向け。CLAUDE.md「配布形態に
+# 関する留意」参照）。ビルド方法：.venv\Scripts\pyinstaller.exe mints_prep.spec
+# 生成物 dist\VA_mints.exe と config.yaml を同じフォルダに配置して配布する
+# （config.yamlは実行ファイルに埋め込まず外部ファイルとし、再ビルドなしに
+# 数値パラメータを編集できるようにしている。src/mints_prep/config.py参照）。
+pyinstaller>=6.0

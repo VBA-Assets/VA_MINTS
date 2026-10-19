@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# 200MB分割機能の手動検証用の大容量ダミーサンプル（scripts/generate_large_sample_folder.py
+# で生成。合計200MB超になるためリポジトリには含めない）。
+samples_large/
+
+# 配布用リリースパッケージ（exe同梱のzip等の大容量バイナリ。dist/と同様、
+# ビルド生成物はリポジトリ履歴に含めない。リリースを履歴管理したい場合は
+# この行を削除すること）。
+release_*/
+
+# マニュアルの生成PDF（ビルド生成物。docs/manual/*.mdとscripts/generate_manual.py
+# から再生成する。samples・アイコンと同じく、ソースとスクリプトのみを履歴管理）。
+docs/manual/*.pdf
