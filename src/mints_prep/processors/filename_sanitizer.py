@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from mints_prep.config import FilenameConfig
+from mints_prep.detectors.filename_detector import compose_mac_filename
 from mints_prep.models import FilenameFinding
 
 DEFAULT_REPLACEMENT_CHAR = "_"
@@ -32,8 +33,10 @@ def sanitize_filename(
     """mintsの制約（100文字以内・禁止文字なし）に適合するファイル名を提案する。
 
     拡張子は保持したまま、禁止文字は置換し、なお100文字を超える場合は
-    幹（拡張子を除いた部分）を切り詰める。
+    幹（拡張子を除いた部分）を切り詰める。Macでは、検出（check_filename）と
+    同じく、濁点・半濁点を合成した形にそろえてから整形する。
     """
+    name = compose_mac_filename(name)
     stem = Path(name).stem
     suffix = Path(name).suffix
 

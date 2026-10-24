@@ -13,6 +13,8 @@ import tkinter as tk
 from dataclasses import dataclass
 from tkinter import ttk
 
+from mints_prep.ui.platform_support import mousewheel_units
+
 
 @dataclass(frozen=True)
 class ChecklistItem:
@@ -75,7 +77,9 @@ class ChecklistDialog(tk.Toplevel):
         # 全ウィジェットに適用される（bind_allと違いアプリ全体のバインドを
         # 専有しないため、他のスクロール領域と衝突しない）。
         def _on_mousewheel(event: tk.Event) -> None:
-            canvas.yview_scroll(-1 * (event.delta // 120), "units")
+            canvas.yview_scroll(
+                mousewheel_units(self, event.delta, -1 * (event.delta // 120)), "units"
+            )
 
         self.bind("<MouseWheel>", _on_mousewheel)
 

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import io
+import unicodedata
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -32,12 +33,17 @@ _PDF_STAMP_FONT = "HeiseiKakuGo-W5"
 _pdf_font_registered = False
 
 # 画像スタンプ用のTTFフォント（Pillowはreportlabと異なりCID組み込み
-# フォントを持たないため、実ファイルが必要）。Windows標準搭載フォントを
-# 優先順に探索する（実行環境はWindows想定。CLAUDE.md非機能要件参照）。
+# フォントを持たないため、実ファイルが必要）。OS標準搭載フォントを
+# 優先順に探索する。Windows標準搭載フォントを先頭に置くため、Windowsでの
+# 出力は従来どおり（メイリオ）。その後ろは、ソースから動かすMac向けの
+# 標準搭載フォント（ヒラギノ角ゴシック。古いMacはArial Unicode）。
 _IMAGE_FONT_CANDIDATES = (
     r"C:\Windows\Fonts\meiryo.ttc",
     r"C:\Windows\Fonts\YuGothM.ttc",
     r"C:\Windows\Fonts\msgothic.ttc",
+    "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
 )
 
 
@@ -119,12 +125,15 @@ def stamp_pdf(input_path: Path, output_path: Path, label: str, config: EvidenceS
 
 def _load_image_font(size_px: int) -> ImageFont.FreeTypeFont:
     for path in _IMAGE_FONT_CANDIDATES:
-        if Path(path).exists():
-            return ImageFont.truetype(path, size_px, index=0)
+        # Macのファイル名は濁点・半濁点を分解した形（NFD）で保存されている
+        # ことがあるため、日本語を含むパスは両方の形で探す。
+        for candidate in dict.fromkeys((path, unicodedata.normalize("NFD", path))):
+            if Path(candidate).exists():
+                return ImageFont.truetype(candidate, size_px, index=0)
     raise FileNotFoundError(
         "証拠番号スタンプ用の日本語フォントが見つかりません"
         f"（候補：{', '.join(_IMAGE_FONT_CANDIDATES)}）。"
-        "Windows標準の日本語フォントが必要です。"
+        "OS標準の日本語フォント（Windowsはメイリオ等、Macはヒラギノ角ゴシック）が必要です。"
     )
 
 

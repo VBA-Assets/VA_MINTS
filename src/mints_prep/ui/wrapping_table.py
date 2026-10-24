@@ -18,6 +18,8 @@ import tkinter as tk
 from dataclasses import dataclass
 from tkinter import ttk
 
+from mints_prep.ui.platform_support import mousewheel_units
+
 
 @dataclass(frozen=True)
 class ColumnSpec:
@@ -146,7 +148,8 @@ class WrappingTable(ttk.Frame):
         self._canvas.unbind_all("<MouseWheel>")
 
     def _on_mousewheel(self, event: tk.Event) -> None:
-        self._canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        units = mousewheel_units(self._canvas, event.delta, int(-1 * (event.delta / 120)))
+        self._canvas.yview_scroll(units, "units")
 
     def _on_select_all_toggle(self) -> None:
         """ヘッダーの全選択チェックボックス：ONで全行ON・OFFで全行OFF。

@@ -29,7 +29,6 @@ CLAUDE.md「絶対に譲れない設計原則」3に従い、実行前に必ず�
 from __future__ import annotations
 
 import dataclasses
-import os
 import queue
 import sys
 import threading
@@ -62,6 +61,7 @@ from mints_prep.processors.report_writer import (
 )
 from mints_prep.scanner.walker import scan_folder
 from mints_prep.ui.checklist_dialog import ChecklistItem, ask_checklist
+from mints_prep.ui import platform_support
 from mints_prep.ui.formatting import (
     CLASSIFICATION_LABELS,
     describe_expected_processing,
@@ -868,7 +868,7 @@ class MainWindow(tk.Tk):
         self.wait_window(dialog)
 
         if open_folder.get():
-            os.startfile(output_dir)  # noqa: S606 - ユーザーが選択した既存のローカルフォルダのみを開く
+            platform_support.open_folder(output_dir)
 
     @staticmethod
     def _dedupe_output_filename(

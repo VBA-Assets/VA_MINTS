@@ -7,6 +7,9 @@ docs/02_constraints-report.md 第3章2節・第7章1節（操作マニュアル2
 
 from __future__ import annotations
 
+import sys
+import unicodedata
+
 from mints_prep.config import FilenameConfig
 from mints_prep.models import FilenameFinding
 
@@ -24,6 +27,19 @@ _CP932_COMPAT_MAP = str.maketrans({
     "￡": "£",  # ￡ → £
     "￢": "¬",  # ￢ → ¬
 })
+
+
+def compose_mac_filename(name: str) -> str:
+    """Macで読み取ったファイル名を、濁点・半濁点を合成した形（NFC）にそろえる。
+
+    Macのファイル名は「ガ」を「カ」＋結合用濁点（U+3099）のように分解した形
+    （NFD）で保存されていることがあり、そのままでは文字数が多く数えられ、
+    結合用濁点がJIS X 0213外の文字と誤って警告され、短縮で濁点だけが切り離される。
+    Windowsではファイル名をそのまま扱う（従来の判定・出力を変えない）。
+    """
+    if sys.platform == "darwin":
+        return unicodedata.normalize("NFC", name)
+    return name
 
 
 def _non_jis_x0213_chars(name: str, codec: str) -> tuple[str, ...]:
@@ -45,8 +61,9 @@ def check_filename(filename: str, config: FilenameConfig) -> FilenameFinding:
 
     文字数は Python の len() をそのまま用いる（全角・半角とも1文字と数える
     マニュアルの計算方法と一致する。サロゲートペアを要する結合文字等の特殊ケースは
-    対象外とする）。
+    対象外とする）。Macでは判定の前にcompose_mac_filenameで合成した形にそろえる。
     """
+    filename = compose_mac_filename(filename)
     length = len(filename)
     forbidden = tuple(ch for ch in config.forbidden_chars if ch in filename)
     non_jis = _non_jis_x0213_chars(filename, config.jis_x0213_codec)
