@@ -44,6 +44,7 @@ from mints_prep.models import FileRecord
 from mints_prep.processors.output_writer import PlannedCopy
 from mints_prep.ui.preview import get_page_count, render_preview, render_preview_with_stamp
 from mints_prep.ui.review_logic import ReviewItem, apply_review_choices, build_review_options
+from mints_prep.ui.tooltip import Tooltip
 
 # スタンプ位置調整ボタン1回分の移動量（mm）。一次資料に定めはなく、UI操作上の
 # 実装値（CLAUDE.md「数値パラメータの設定ファイル化」原則が対象とする
@@ -189,13 +190,26 @@ class WriteReviewDialog(tk.Toplevel):
         self._build_options(left)
         self._refresh_preview()
 
+        # ボタンの説明書き（マウスオーバーで表示。2026-11-13 班長指示「ボタンにマウスオーバーした時に
+        # 説明を表示」）。画面下端近くのボタンは、タスクバーに隠れないよう上側に出す（above）。
         button_frame = ttk.Frame(self, padding=12)
         button_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(
+        b = ttk.Button(
             button_frame, text="キャンセル（この文書はスキップ）", command=self._on_cancel
-        ).pack(side=tk.RIGHT, padx=(6, 0))
-        ttk.Button(button_frame, text="この内容で書き出す", command=self._on_confirm).pack(
-            side=tk.RIGHT
+        )
+        b.pack(side=tk.RIGHT, padx=(6, 0))
+        b.tooltip = Tooltip(
+            b,
+            "この1件だけを書き出さずにスキップして、次のファイルに進みます。"
+            "残りのすべてのファイルをまとめて中断するときは、ウィンドウ右上の×ボタンで閉じてください。",
+            above=True,
+        )
+        b = ttk.Button(button_frame, text="この内容で書き出す", command=self._on_confirm)
+        b.pack(side=tk.RIGHT)
+        b.tooltip = Tooltip(
+            b,
+            "左のチェックの内容のとおり処理して、この1件を出力フォルダへ書き出し、次のファイルに進みます。",
+            above=True,
         )
 
         self.protocol("WM_DELETE_WINDOW", self._on_abort)
@@ -275,20 +289,26 @@ class WriteReviewDialog(tk.Toplevel):
         row = ttk.Frame(frame)
         row.pack(side=tk.TOP, anchor="w", padx=8, pady=(6, 8))
         # 既定（左に90°）を先頭に並べる。
-        ttk.Radiobutton(
+        r = ttk.Radiobutton(
             row,
             text="左に90°",
             variable=self._rotate_degrees_var,
             value=270,
             command=self._refresh_preview,
-        ).pack(side=tk.LEFT)
-        ttk.Radiobutton(
+        )
+        r.pack(side=tk.LEFT)
+        r.tooltip = Tooltip(r, "ページを左（反時計回り）に90°回転します。選ぶとプレビューがすぐ切り替わるので、"
+                               "読める向きになることを確かめてください。")
+        r = ttk.Radiobutton(
             row,
             text="右に90°",
             variable=self._rotate_degrees_var,
             value=90,
             command=self._refresh_preview,
-        ).pack(side=tk.LEFT, padx=(12, 0))
+        )
+        r.pack(side=tk.LEFT, padx=(12, 0))
+        r.tooltip = Tooltip(r, "ページを右（時計回り）に90°回転します。選ぶとプレビューがすぐ切り替わるので、"
+                               "読める向きになることを確かめてください。")
 
     def _build_position_controls(self, parent: tk.Misc) -> None:
         """スタンプ位置調整UI（要件定義書4.7）。上下左右ボタンでこのファイル
@@ -302,21 +322,21 @@ class WriteReviewDialog(tk.Toplevel):
 
         grid = ttk.Frame(frame)
         grid.pack(side=tk.TOP, padx=8, pady=(0, 8))
-        ttk.Button(
-            grid, text="↑", width=3, command=lambda: self._adjust_stamp_position(dy=-1)
-        ).grid(row=0, column=1)
-        ttk.Button(
-            grid, text="←", width=3, command=lambda: self._adjust_stamp_position(dx=-1)
-        ).grid(row=1, column=0)
-        ttk.Button(grid, text="リセット", command=self._reset_stamp_position).grid(
-            row=1, column=1, padx=4
+        arrows = (
+            ("↑", dict(dy=-1), 0, 1, "スタンプを上へ動かします。動かした位置は、このファイルだけに使われます。"),
+            ("←", dict(dx=-1), 1, 0, "スタンプを左へ動かします。動かした位置は、このファイルだけに使われます。"),
+            ("→", dict(dx=1), 1, 2, "スタンプを右へ動かします。動かした位置は、このファイルだけに使われます。"),
+            ("↓", dict(dy=1), 2, 1, "スタンプを下へ動かします。動かした位置は、このファイルだけに使われます。"),
         )
-        ttk.Button(
-            grid, text="→", width=3, command=lambda: self._adjust_stamp_position(dx=1)
-        ).grid(row=1, column=2)
-        ttk.Button(
-            grid, text="↓", width=3, command=lambda: self._adjust_stamp_position(dy=1)
-        ).grid(row=2, column=1)
+        for text, delta, row, column, tip in arrows:
+            b = ttk.Button(
+                grid, text=text, width=3, command=lambda d=delta: self._adjust_stamp_position(**d)
+            )
+            b.grid(row=row, column=column)
+            b.tooltip = Tooltip(b, tip)
+        b = ttk.Button(grid, text="リセット", command=self._reset_stamp_position)
+        b.grid(row=1, column=1, padx=4)
+        b.tooltip = Tooltip(b, "スタンプの位置を、設定ファイル（config.yaml）の既定の余白に戻します。")
 
     def _position_label_text(self) -> str:
         return (
@@ -365,6 +385,10 @@ class WriteReviewDialog(tk.Toplevel):
                 member_nav, text="◀ 前のファイル", command=lambda: self._change_member(-1)
             )
             self._prev_member_button.pack(side=tk.LEFT)
+            self._prev_member_button.tooltip = Tooltip(
+                self._prev_member_button,
+                "結合される1つ前のファイルをプレビューに表示します。スタンプは結合されるすべての"
+                "ファイルに載るため、全ファイルを確認してください。")
             self._member_label = ttk.Label(
                 member_nav, text=self._member_label_text(), anchor="center"
             )
@@ -373,6 +397,10 @@ class WriteReviewDialog(tk.Toplevel):
                 member_nav, text="次のファイル ▶", command=lambda: self._change_member(1)
             )
             self._next_member_button.pack(side=tk.RIGHT)
+            self._next_member_button.tooltip = Tooltip(
+                self._next_member_button,
+                "結合される次のファイルをプレビューに表示します。スタンプは結合されるすべての"
+                "ファイルに載るため、全ファイルを確認してください。")
         # ページ送りは、初期表示ページが1枚でもメンバー切替で複数ページに
         # なり得るため、結合グループでは常に表示する（端では無効化される）。
         if self._page_count > 1 or len(self._members) > 1:
@@ -382,12 +410,20 @@ class WriteReviewDialog(tk.Toplevel):
                 nav, text="◀ 前のページ", command=lambda: self._change_page(-1)
             )
             self._prev_page_button.pack(side=tk.LEFT)
+            self._prev_page_button.tooltip = Tooltip(
+                self._prev_page_button,
+                "プレビューを1つ前のページに戻します。原本に証拠番号が既に記載されていないかは、"
+                "全ページを確認してください。")
             self._page_label = ttk.Label(nav, text=self._page_label_text(), anchor="center")
             self._page_label.pack(side=tk.LEFT, expand=True, fill=tk.X)
             self._next_page_button = ttk.Button(
                 nav, text="次のページ ▶", command=lambda: self._change_page(1)
             )
             self._next_page_button.pack(side=tk.RIGHT)
+            self._next_page_button.tooltip = Tooltip(
+                self._next_page_button,
+                "プレビューを次のページに送ります。原本に証拠番号が既に記載されていないかは、"
+                "全ページを確認してください。")
         self._update_page_nav_state()
         self._update_member_nav_state()
         self._preview_label = ttk.Label(parent, anchor="center", justify="center")

@@ -19,6 +19,8 @@ from tkinter import ttk
 ACCENT = "#0078d4"
 # ウィンドウ背景（Wordのダイアログ相当の明るいグレー）
 WINDOW_BG = "#f0f0f0"
+# 入力欄・カード等の背景
+FIELD_BG = "#ffffff"
 # ボタンの面（背景よりわずかに白寄りにして浮かせる）
 CONTROL_BG = "#fdfdfd"
 # ホバー時の面（淡い青）
@@ -29,6 +31,14 @@ PRESSED_BG = "#cce4f7"
 BORDER = "#c8c8c8"
 # 文字色（純黒より柔らかい黒）
 TEXT = "#1a1a1a"
+# 補足・注記テキスト
+NOTE = "#666666"
+# 押せないボタン等の文字色
+DISABLED_TEXT = "#a0a0a0"
+# リボンのボタンのアイコン（VA Case・VA Document と同じ色。班長の UI 設計方針のフラットデザイン）
+ICON_TINT = "#9cc9f0"            # アイコンの塗りつぶし版を敷く色（薄い青）
+ICON_TINT_DISABLED = "#e2e2e2"   # 押せないときの、塗りつぶし版の色
+RIBBON_HOVER_BORDER = "#a9cdee"  # リボンのボタンに重ねたときの枠
 # スクロールバー：レール（trough）は背景と同系の薄いグレー、スライダー
 # （つまみ）はそれより濃いグレーとし、つまみの方が目立つようにする
 # （Windows・ブラウザ標準のスクロールバーの配色に倣う）。
@@ -41,6 +51,19 @@ SCROLL_THUMB_PRESSED = "#8a8a8a"
 # 搭載されていない環境では既定フォントのまま変更しない。
 _PREFERRED_FONT_FAMILY = "Yu Gothic UI"
 _FONT_SIZE = 9
+
+
+def scale(widget: tk.Misc) -> float:
+    """画面の拡大率（96 dpi を 1.0 とする）。画素で決めた幅・高さに掛けて使う（VA Case と同じ）。"""
+    try:
+        return max(1.0, widget.winfo_fpixels("1i") / 96.0)
+    except Exception:
+        return 1.0
+
+
+def px(widget: tk.Misc, n: int) -> int:
+    """96 dpi のときの n 画素を、いまの画面の画素にする。"""
+    return int(round(n * scale(widget)))
 
 
 def apply_theme(root: tk.Tk) -> None:
@@ -61,6 +84,7 @@ def apply_theme(root: tk.Tk) -> None:
 
     root.configure(background=WINDOW_BG)
     style.configure(".", background=WINDOW_BG, foreground=TEXT, bordercolor=BORDER, focuscolor=ACCENT)
+    style.map(".", foreground=[("disabled", DISABLED_TEXT)])
 
     # ボタン：白系の面＋細いグレー枠線。ホバーで淡い青の面＋青枠、押下で
     # 一段濃い青（Word・Office系ダイアログのボタン挙動に倣う）。
@@ -82,6 +106,41 @@ def apply_theme(root: tk.Tk) -> None:
     )
     # 主要操作ボタン（読み込み・書き出し）：太字のみで強調（配色は共通）。
     style.configure("Emphasis.TButton", font=(base_family, 10, "bold"), foreground="black")
+
+    # リボンのボタン（VA Case・VA Document と同じ）：Word のリボンと同じく、ふだんは枠も地もなく、
+    # 重ねたときだけ淡い青の地と枠を出す（班長の UI 方針の「常時、細い枠線」の、リボンだけの例外。
+    # VA Document の 2026-10-24 班長決定と同じ）。大きいボタン（RibbonLarge）はアイコンの下に字、
+    # 小さいボタン（Ribbon）はアイコンの右に字。
+    ribbon_states = dict(
+        background=[("disabled", WINDOW_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        lightcolor=[("disabled", WINDOW_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        darkcolor=[("disabled", WINDOW_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        bordercolor=[("disabled", WINDOW_BG), ("pressed", RIBBON_HOVER_BORDER), ("active", RIBBON_HOVER_BORDER)],
+    )
+    for name, padding, anchor in (("Ribbon.TButton", (3, 1), "w"), ("RibbonLarge.TButton", (4, 2), "center")):
+        style.configure(
+            name, background=WINDOW_BG, bordercolor=WINDOW_BG, lightcolor=WINDOW_BG, darkcolor=WINDOW_BG,
+            padding=padding, width=0, anchor=anchor, justify="center",
+        )
+        style.map(name, **ribbon_states)
+    style.configure("Ribbon.TFrame", background=WINDOW_BG)
+    style.configure("Ribbon.TLabel", background=WINDOW_BG)
+    style.configure("RibbonGroup.TLabel", background=WINDOW_BG, foreground=NOTE, padding=(0, 0, 0, 2))
+    style.configure("RibbonNote.TLabel", background=WINDOW_BG, foreground=NOTE)
+    # リボンの主要な操作（読み込み・書き出しの大きいボタン）：見落とされないよう、ほかのリボンのボタンと
+    # 違い、いつも地と青い枠を出す（VA Case の「編集を終える」〔RibbonEditEnd〕と同じ形。班長の UI 方針の
+    # 「主要な操作ボタンは枠線の色をアクセント色にする」に合わせる）。
+    style.configure(
+        "RibbonAccent.TButton", background=CONTROL_BG, bordercolor=ACCENT, lightcolor=CONTROL_BG,
+        darkcolor=CONTROL_BG, padding=(4, 2), width=0, anchor="center", justify="center",
+    )
+    style.map(
+        "RibbonAccent.TButton",
+        background=[("disabled", CONTROL_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        lightcolor=[("disabled", CONTROL_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        darkcolor=[("disabled", CONTROL_BG), ("pressed", PRESSED_BG), ("active", HOVER_BG)],
+        bordercolor=[("disabled", BORDER), ("!disabled", ACCENT)],
+    )
 
     # 入力欄：白背景＋細いグレー枠線、フォーカス時は青枠（Word系の入力欄に倣う）。
     style.configure(

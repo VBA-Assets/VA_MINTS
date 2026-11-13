@@ -8,7 +8,12 @@ a = Analysis(
     # ウィンドウ（タイトルバー・タスクバー）用アイコン。実行ファイル自体の
     # アイコンはEXE(icon=...)で埋め込むが、Tkウィンドウ側は実行時にファイル
     # として読む必要があるため、onefileの展開先（sys._MEIPASS）へ同梱する。
-    datas=[('assets/VA_mints.ico', 'assets')],
+    # リボンのボタンのアイコン（src/mints_prep/ui/icons/*.png）も、実行時に
+    # ファイルとして読むため同梱する（ui/icons.pyが_MEIPASS配下を参照する）。
+    datas=[
+        ('assets/VA_mints.ico', 'assets'),
+        ('src/mints_prep/ui/icons', 'mints_prep/ui/icons'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

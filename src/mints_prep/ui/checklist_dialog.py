@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from tkinter import ttk
 
 from mints_prep.ui.platform_support import mousewheel_units
+from mints_prep.ui.tooltip import Tooltip
 
 
 @dataclass(frozen=True)
@@ -99,13 +100,25 @@ class ChecklistDialog(tk.Toplevel):
                 wraplength=650,
             ).pack(side=tk.LEFT, anchor="w")
 
+        # ボタンの説明書き（マウスオーバーで表示。2026-11-13 班長指示）。画面下端近くの
+        # ボタンは、タスクバーに隠れないよう上側に出す（above）。
         button_frame = ttk.Frame(self, padding=12)
         button_frame.pack(side=tk.BOTTOM, fill=tk.X)
-        ttk.Button(button_frame, text="中止（結合しない）", command=self._on_cancel).pack(
-            side=tk.RIGHT, padx=(6, 0)
+        b = ttk.Button(button_frame, text="中止（結合しない）", command=self._on_cancel)
+        b.pack(side=tk.RIGHT, padx=(6, 0))
+        b.tooltip = Tooltip(
+            b,
+            "枝番ファイルの結合をすべて取りやめて、この画面を閉じます。"
+            "どのグループも結合せず、個別のファイルのまま書き出しの確認に進みます。",
+            above=True,
         )
-        ttk.Button(button_frame, text="この内容で実行", command=self._on_execute).pack(
-            side=tk.RIGHT
+        b = ttk.Button(button_frame, text="この内容で実行", command=self._on_execute)
+        b.pack(side=tk.RIGHT)
+        b.tooltip = Tooltip(
+            b,
+            "チェックの入ったグループを結合する内容で確定して、書き出しの確認に進みます。"
+            "チェックを外したグループは結合せず、個別のファイルのまま書き出します。",
+            above=True,
         )
 
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)

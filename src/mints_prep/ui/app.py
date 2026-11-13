@@ -33,9 +33,11 @@ import queue
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from mints_prep import __version__, diagnostics
 from mints_prep.config import Config, FilenameConfig, load_config
 from mints_prep.models import Classification, FileRecord, ScanResult
 from mints_prep.naming.evidence_number import match_evidence_number
@@ -67,8 +69,11 @@ from mints_prep.ui.formatting import (
     describe_expected_processing,
     format_size_display,
 )
+from mints_prep.ui.icons import IconSet
 from mints_prep.ui.review_logic import ReviewItem
+from mints_prep.ui.ribbon import Ribbon
 from mints_prep.ui.theme import apply_theme
+from mints_prep.ui.tooltip import Tooltip
 from mints_prep.ui.wrapping_table import ColumnSpec, WrappingTable
 from mints_prep.ui.write_review_dialog import _grab_when_viewable, review_and_confirm
 
@@ -147,8 +152,16 @@ class MainWindow(tk.Tk):
         self._include_subfolders_var = tk.BooleanVar(value=False)
         self._scan_result: ScanResult | None = None
         self._queue: "queue.Queue[object]" = queue.Queue()
+        # 起きた誤りの記録（型と場所だけ。診断情報〔ヘルプ→診断情報をコピー〕に載せる）。
+        self._errors = diagnostics.ErrorLog()
 
+        self._build_menu()
         self._build_widgets()
+
+    def report_callback_exception(self, exc_type, exc, tb) -> None:
+        """画面の処理（ボタン・キーなど）で起きた、予期しない誤りを覚える（Tk の既定どおり、出力にも出す）。"""
+        self._errors.record(exc, "画面の処理")
+        super().report_callback_exception(exc_type, exc, tb)
 
     # フォルダパスはテキストボックス（手動入力可）と連動させるため、常に
     # StringVarから読み取る（ボタンでの選択と手動入力の両方を単一の入力源にする）。
@@ -162,62 +175,172 @@ class MainWindow(tk.Tk):
         text = self._output_dir_var.get().strip()
         return Path(text) if text else None
 
+    # ------------------------------------------------------------------ メニュー
+    def _build_menu(self) -> None:
+        """メニューバー（［ヘルプ］→［診断情報をコピー］。2026-11-10 班長決定：Python のツールに、
+        次の版上げのときに入れる）。"""
+        bar = tk.Menu(self)
+        h = tk.Menu(bar, tearoff=False)
+        h.add_command(label="診断情報をコピー", command=self._copy_diagnostics)
+        h.add_separator()
+        h.add_command(
+            label="VA mints について",
+            command=lambda: messagebox.showinfo(
+                "VA mints",
+                f"VA mints  {__version__}\n"
+                "mints（民事裁判書類電子提出システム）「記録」提出前チェック・準備ツール\n\n"
+                "VBAアセット（vba-assets.net）\nMIT License",
+                parent=self,
+            ),
+        )
+        bar.add_cascade(label="ヘルプ", menu=h)
+        self.config(menu=bar)
+
+    def _copy_diagnostics(self) -> None:
+        text = self._diagnostic_text()
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        messagebox.showinfo(
+            "VA mints",
+            "診断情報をコピーしました。\n\n"
+            "不具合を相談するときは、これを貼り付けて渡してください。版・環境・設定の数値・件数・"
+            "誤りの起きた場所だけが入っていて、証拠・書面のファイル名や、ファイル・フォルダの場所は"
+            "入っていません。\n"
+            "渡す前に、メモ帳などに貼り付けて、中身を確かめることができます。",
+            parent=self,
+        )
+
+    def _diagnostic_text(self) -> str:
+        """診断情報の文。中身（ファイル名・場所・例外のメッセージの本文）を一切入れない（diagnostics.py の冒頭）。"""
+        d = diagnostics
+        c = self.config_obj
+        lines = [f"VA mints 診断情報（{datetime.now():%Y-%m-%d %H:%M}）",
+                 "※ 証拠・書面のファイル名、ファイルやフォルダの場所、利用者と PC の名前は入っていません。", ""]
+        lines += ["■ 環境"] + d.environment_lines(self, "VA mints", __version__) + [""]
+        lines += ["■ 設定（config.yaml の数値。場所・正規表現の中身は入れない）",
+                  f"アップロード上限：{c.upload.max_total_mb:g}MB・安全マージン {c.upload.safety_margin_ratio:g}",
+                  f"ファイル名：上限 {c.filename.max_length} 字・警告 {c.filename.warning_length} 字・"
+                  f"禁止文字 {len(c.filename.forbidden_chars)} 種",
+                  f"証拠番号：符号 {len(c.evidence_number.symbols)} 種・数字 {c.evidence_number.digits} 桁",
+                  f"スタンプ：{c.evidence_stamp.font_size_pt:g}pt・上 {c.evidence_stamp.margin_top_mm:g}mm・"
+                  f"右 {c.evidence_stamp.margin_right_mm:g}mm・見た目 {c.evidence_stamp.style}",
+                  f"個人情報パターン：{len(c.pii_detection.patterns)} 件", ""]
+        lines.append("■ 状態")
+        for label, path in (("入力フォルダの欄", self._input_dir), ("出力フォルダの欄", self._output_dir)):
+            if path is None:
+                lines.append(f"{label}：設定なし")
+            else:
+                try:
+                    exists = "フォルダがある" if path.is_dir() else "見つからない"
+                except OSError:
+                    exists = "確かめられない"
+                lines.append(f"{label}：設定あり（{exists}）")
+        lines.append(f"サブフォルダも含める：{'はい' if self._include_subfolders_var.get() else 'いいえ'}")
+        if self._scan_result is None:
+            lines.append("読み込み：まだ")
+        else:
+            counts = {c2: 0 for c2 in Classification}
+            for record in self._scan_result.records:
+                counts[record.classification] += 1
+            checked = sum(1 for s in self._table.get_checked_states() if s)
+            lines.append(
+                f"読み込み済み：全 {len(self._scan_result.records)} 件"
+                f"（A {counts[Classification.A_COMPLIANT]}・B {counts[Classification.B_NEEDS_FIX]}・"
+                f"C {counts[Classification.C_NEEDS_CONVERSION]}・D {counts[Classification.D_UNSUPPORTED]}）・"
+                f"チェック中 {checked} 件"
+            )
+        records = self._errors.records
+        lines += ["", f"■ 起きた誤り（新しいものから {min(len(records), d.SHOW_ERRORS)} 件。"
+                      f"覚えているのは全 {len(records)} 件）"]
+        if not records:
+            lines.append("なし")
+        for r in reversed(records[-d.SHOW_ERRORS:]):
+            lines += d.format_record(r)
+        return "\n".join(lines) + "\n"
+
     # ------------------------------------------------------------------ UI構築
     def _build_widgets(self) -> None:
-        top = ttk.Frame(self, padding=8)
-        top.pack(side=tk.TOP, fill=tk.X)
+        # 上部の操作は、VA Case シリーズと同じリボン（ui/ribbon.py）に置く。
+        # 組は「読み込み」「書き出し」の2つ。主要な操作（読み込み・書き出し）は
+        # 大きいボタン（いつも青い枠。RibbonAccent）、フォルダの欄などの部品は
+        # 組の中の block に置く。説明はマウスを重ねたときの説明書き（Tooltip）で出す。
+        self._icons = IconSet(self)
+        rb = Ribbon(self, self._icons)
+        rb.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(6, 2))
 
-        # フォルダパス欄は、これまで画面全幅まで伸びて見づらかったため、
-        # 文字数指定の固定幅（画面全幅の半分程度）にとどめる。
-        _FOLDER_ENTRY_WIDTH = 60
+        # フォルダパス欄は、画面全幅まで伸ばさず固定幅にとどめる（従来方針）。
+        _FOLDER_ENTRY_WIDTH = 42
 
-        ttk.Label(top, text="入力フォルダ：").grid(row=0, column=0, sticky="w", pady=2)
-        ttk.Entry(top, textvariable=self._input_dir_var, width=_FOLDER_ENTRY_WIDTH).grid(
-            row=0, column=1, sticky="w", padx=(4, 4), pady=2
+        # ---- 「読み込み」の組
+        g = rb.group("読み込み")
+        box = ttk.Frame(g.body, style="Ribbon.TFrame")
+        ttk.Label(box, text="入力フォルダ", style="Ribbon.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(2, 6), pady=1
         )
+        e = ttk.Entry(box, textvariable=self._input_dir_var, width=_FOLDER_ENTRY_WIDTH)
+        e.grid(row=0, column=1, sticky="w", pady=1)
+        e.tooltip = Tooltip(e, "読み込むファイルの入ったフォルダです。手で入力するか、右の［...］で選びます。")
         # フォルダ選択ボタンは、フォルダ参照ダイアログを開く操作であることが
         # 隣接するテキスト欄から自明なため、Windows標準の「参照」ダイアログの
         # 慣行に倣い「...」の省略表記にとどめる。
-        ttk.Button(top, text="...", width=3, command=self._choose_input_dir).grid(
-            row=0, column=2, padx=(0, 4)
+        b = ttk.Button(box, text="...", width=3, command=self._choose_input_dir,
+                       style="Ribbon.TButton", takefocus=False)
+        b.grid(row=0, column=2, sticky="w", padx=(2, 0), pady=1)
+        b.tooltip = Tooltip(b, "入力フォルダを選びます。")
+        # 'clam'テーマのttk.Checkbuttonはチェック時のインジケータが「✕」
+        # 形状に描画され、選択済みではなく利用不可のように見えるため、
+        # 標準tk.Checkbuttonを使う（write_review_dialogと同方針）。
+        cb = tk.Checkbutton(
+            box,
+            text="サブフォルダ内のファイルも含める",
+            variable=self._include_subfolders_var,
         )
+        cb.grid(row=1, column=0, columnspan=3, sticky="w")
+        cb.tooltip = Tooltip(
+            cb,
+            "チェックを入れると、入力フォルダの下のサブフォルダの中のファイルも読み込みます。"
+            "既定は入力フォルダ直下のみです（他事件のファイル等を意図せず読み込む事故を避けるため）。",
+        )
+        g.block(box)
         # ボタン名は「スキャン」を避ける（実物のスキャナー〔ScanSnap等〕による
         # 読み取り操作と紛らわしいため）。要件定義書自体はこの処理を「スキャン」と
         # 呼ぶが、これはツール内部の機能名であり、画面表示は「フォルダの中身を
         # ツールに取り込む」動作として利用者に自然な「読み込み」に統一する。
-        self._scan_button = ttk.Button(
-            top, text="ファイルを読み込み", command=self._start_scan, style="Emphasis.TButton"
+        self._scan_button = g.large(
+            "ファイルを読み込み", self._start_scan, style="RibbonAccent.TButton",
+            tip="入力フォルダの中のファイルを読み込み、mintsの制約（ファイル形式・サイズ・"
+                "ファイル名等）に適合するかを検査して、一覧に表示します。ファイルは変更しません。",
         )
-        self._scan_button.grid(row=0, column=3, padx=(4, 0))
 
-        # 'clam'テーマのttk.Checkbuttonはチェック時のインジケータが「✕」
-        # 形状に描画され、選択済みではなく利用不可のように見えるため、
-        # 標準tk.Checkbuttonを使う（write_review_dialogと同方針）。
-        tk.Checkbutton(
-            top,
-            text="サブフォルダ内のファイルも含める（既定は入力フォルダ直下のみ）",
-            variable=self._include_subfolders_var,
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 6))
-
-        ttk.Label(top, text="").grid(row=2, column=0, columnspan=4)
-
-        ttk.Label(top, text="出力フォルダ：").grid(row=3, column=0, sticky="w", pady=2)
-        ttk.Entry(top, textvariable=self._output_dir_var, width=_FOLDER_ENTRY_WIDTH).grid(
-            row=3, column=1, sticky="w", padx=(4, 4), pady=2
+        # ---- 「書き出し」の組
+        g = rb.group("書き出し")
+        box = ttk.Frame(g.body, style="Ribbon.TFrame")
+        ttk.Label(box, text="出力フォルダ", style="Ribbon.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(2, 6), pady=1
         )
-        ttk.Button(top, text="...", width=3, command=self._choose_output_dir).grid(
-            row=3, column=2, padx=(0, 4)
-        )
-        self._write_button = ttk.Button(
-            top, text="ファイルを書き出し", command=self._start_output_write, style="Emphasis.TButton"
-        )
-        self._write_button.grid(row=3, column=3, padx=(4, 0))
-
+        e = ttk.Entry(box, textvariable=self._output_dir_var, width=_FOLDER_ENTRY_WIDTH)
+        e.grid(row=0, column=1, sticky="w", pady=1)
+        e.tooltip = Tooltip(e, "書き出したファイルを入れるフォルダです。手で入力するか、右の［...］で選びます。")
+        b = ttk.Button(box, text="...", width=3, command=self._choose_output_dir,
+                       style="Ribbon.TButton", takefocus=False)
+        b.grid(row=0, column=2, sticky="w", padx=(2, 0), pady=1)
+        b.tooltip = Tooltip(b, "出力フォルダを選びます。")
+        # 書き出し対象の注記は、常時表示のラベルからリボンの注記行に移す
+        # （内容は従来と同じ。詳しい説明は書き出しボタンの説明書きにも出る）。
         ttk.Label(
-            top,
-            text="※ 書き出し対象はA（適合済み）・B（要修正）のみ（C＝要変換／D＝対象外は対象外）です",
-            foreground="#666666",
-        ).grid(row=4, column=0, columnspan=4, sticky="w", pady=(0, 6))
+            box,
+            text="※ 対象はA（適合済み）・B（要修正）のみ",
+            style="RibbonNote.TLabel",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=(2, 0))
+        g.block(box)
+        self._write_button = g.large(
+            "ファイルを書き出し", self._start_output_write, style="RibbonAccent.TButton",
+            tip=self._write_tip,
+        )
+        # ファイルを読み込むまでは、書き出しは押せない（グレーアウト。2026-11-13 班長指示）。
+        # 読み込みが成功したとき（_poll_scan_queue）に押せるようにし、読み込みを
+        # やり直す間（_start_scan）は再び押せなくする。
+        self._write_button.state(["disabled"])
 
         # ttk.Treeviewはセル内テキストの折り返し表示に対応していない（列幅を
         # 超える文章は単純に切り詰められる）ため、Frame/Labelベースの自作表
@@ -241,6 +364,17 @@ class MainWindow(tk.Tk):
 
         self._summary_label = ttk.Label(self, text="", padding=8, anchor="w", justify="left")
         self._summary_label.pack(side=tk.BOTTOM, fill=tk.X)
+
+    def _write_tip(self) -> str:
+        """［ファイルを書き出し］の説明書き。読み込み前（押せない間）は、その旨を先に出す。"""
+        base = (
+            "一覧でチェックの入ったファイルを、1件ずつ内容を確認しながら出力フォルダへ"
+            "書き出します。書き出し対象はA（適合済み）・B（要修正）のみです"
+            "（C＝要変換／D＝対象外は対象外）。"
+        )
+        if self._scan_result is None:
+            return "先に［ファイルを読み込み］でファイルを読み込むと、押せるようになります。" + base
+        return base
 
     # ------------------------------------------------------------------ フォルダ選択
     def _choose_input_dir(self) -> None:
@@ -276,6 +410,8 @@ class MainWindow(tk.Tk):
             return
 
         self._scan_button.config(state=tk.DISABLED)
+        # 読み込み直しの間も、書き出しは押せなくする（結果が入れ替わる途中のため）。
+        self._write_button.state(["disabled"])
         self._status_label.config(text="読み込み中...")
         self._table.clear()
 
@@ -306,6 +442,7 @@ class MainWindow(tk.Tk):
 
         self._scan_button.config(state=tk.NORMAL)
         if isinstance(item, Exception):
+            self._errors.record(item, "読み込み")
             # 前回の読み込み結果を破棄する（残したままだと、テーブルは空なのに
             # 「ファイルを書き出し」が前回結果に基づく紛らわしい動きをする）。
             self._scan_result = None
@@ -316,6 +453,9 @@ class MainWindow(tk.Tk):
 
         self._scan_result = item
         self._populate_table(item)
+        # 読み込みが済んだので、書き出しを押せるようにする（0件でも、押せば
+        # 「書き出し対象がありません」の案内が出る）。
+        self._write_button.state(["!disabled"])
 
     # ------------------------------------------------------------------ 結果表示
     def _populate_table(self, result: ScanResult) -> None:
@@ -665,6 +805,7 @@ class MainWindow(tk.Tk):
                         batch_dir.mkdir(parents=True, exist_ok=True)
                         copy_to_output([final_item], batch_dir, self.config_obj.evidence_stamp)
                     except Exception as exc:  # noqa: BLE001 - 1件の失敗を全体停止にしない
+                        self._errors.record(exc, "書き出し")
                         proceed = messagebox.askyesno(
                             "書き出しエラー",
                             f"「{final_name}」の書き出しに失敗しました：\n{exc}\n\n"
@@ -684,6 +825,7 @@ class MainWindow(tk.Tk):
                 if aborted:
                     break
         except Exception as exc:  # noqa: BLE001 - 想定外の失敗でもUIを操作可能なまま残す
+            self._errors.record(exc, "書き出し")
             messagebox.showerror(
                 "書き出し処理でエラーが発生しました",
                 f"想定外のエラーのため書き出しを中断しました：\n{exc}\n\n"
@@ -713,6 +855,7 @@ class MainWindow(tk.Tk):
             report_path = write_report(report_text, output_dir)
             report_note = f"処理内容の詳細は「{report_path.name}」をご確認ください。"
         except Exception as exc:  # noqa: BLE001 - レポート保存失敗を完了通知の妨げにしない
+            self._errors.record(exc, "レポート保存")
             report_note = f"（レポートの保存に失敗しました：{exc}）"
 
         total_written = len(actual_planned)
@@ -855,11 +998,18 @@ class MainWindow(tk.Tk):
             open_folder.set(open_after)
             dialog.destroy()
 
-        ttk.Button(
+        open_button = ttk.Button(
             button_frame, text="フォルダを開く", command=lambda: _close(True)
-        ).pack(side=tk.RIGHT, padx=(6, 0))
+        )
+        open_button.pack(side=tk.RIGHT, padx=(6, 0))
+        open_button.tooltip = Tooltip(
+            open_button, "このお知らせを閉じて、出力フォルダをエクスプローラーで開きます。", above=True
+        )
         ok_button = ttk.Button(button_frame, text="OK", command=lambda: _close(False))
         ok_button.pack(side=tk.RIGHT)
+        ok_button.tooltip = Tooltip(
+            ok_button, "このお知らせを閉じます（フォルダは開きません）。", above=True
+        )
 
         dialog.protocol("WM_DELETE_WINDOW", lambda: _close(False))
         dialog.bind("<Return>", lambda _e: _close(False))
@@ -901,6 +1051,7 @@ def main() -> None:
     try:
         app = MainWindow()
     except Exception as exc:  # noqa: BLE001 - 起動失敗を無言終了にしない
+        diagnostics.ErrorLog().record(exc, "起動")
         # config.yamlの検証エラー・不存在等（load_configがYAML構文エラー・
         # キー欠落・型違いも日本語メッセージのValueErrorへ変換する）に加え、
         # 想定外の例外も含めて捕捉する。--windowedのexeでは標準エラー出力が
