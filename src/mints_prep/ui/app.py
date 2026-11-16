@@ -641,7 +641,7 @@ class MainWindow(tk.Tk):
     def _restore_tip(self) -> str:
         base = (
             f"［ファイルを更新］で更新したファイルを、「{BACKUP_DIRNAME}」フォルダに残した"
-            "更新前のファイルに戻します。更新の後に他のアプリで直した内容も、元に戻ります。"
+            "最初に更新する前のファイルに戻します。更新の後に他のアプリで直した内容も、元に戻ります。"
         )
         if "disabled" in self._restore_button.state():
             return "読み込んだフォルダに、このツールで更新したファイルがあるときに押せます。" + base
@@ -1282,7 +1282,7 @@ class MainWindow(tk.Tk):
         count = len(Manifest.load(root).entries)
         if not messagebox.askokcancel(APP_TITLE,
             f"このツールで更新した {count} 件のファイルを、「{BACKUP_DIRNAME}」フォルダに残した"
-            "更新前のファイルに戻します。\n\n"
+            "最初に更新する前のファイルに戻します。\n\n"
             "・名前を変えたファイル、結合したファイル、「提出用_NN」フォルダへ移したファイルも、"
             "元の名前・元の位置に戻ります。\n"
             "・更新の後に、他のアプリでこれらのファイルを直していた場合、その内容は失われます。\n"
@@ -1292,7 +1292,7 @@ class MainWindow(tk.Tk):
             default=messagebox.CANCEL,
         ):
             return
-        self._status_label.config(text="更新前に戻しています...")
+        self._status_label.config(text="元のファイルに戻しています...")
         self.update_idletasks()
         try:
             result = restore_all(root)
@@ -1300,7 +1300,7 @@ class MainWindow(tk.Tk):
             self._errors.record(exc, "元のファイルに戻す")
             messagebox.showerror(APP_TITLE,
                 f"元に戻す処理でエラーが発生しました：\n{exc}\n\n"
-                f"更新前のファイルは「{BACKUP_DIRNAME}」フォルダに残っています。",
+                f"最初に更新する前のファイルは「{BACKUP_DIRNAME}」フォルダに残っています。",
             )
             self._rescan()
             return
@@ -1310,10 +1310,10 @@ class MainWindow(tk.Tk):
                 shown += f"\n...ほか{len(result.failures) - 15}件"
             messagebox.showwarning(APP_TITLE,
                 f"{result.restored} 件を元に戻しましたが、次のファイルは戻せませんでした。\n\n{shown}\n\n"
-                f"戻せなかったファイルの更新前のものは、「{BACKUP_DIRNAME}」フォルダに残っています。",
+                f"戻せなかったファイルの、最初に更新する前のものは、「{BACKUP_DIRNAME}」フォルダに残っています。",
             )
         else:
-            messagebox.showinfo(APP_TITLE, f"{result.restored} 件のファイルを、更新前に戻しました。")
+            messagebox.showinfo(APP_TITLE, f"{result.restored} 件のファイルを、元のファイルに戻しました。")
         self._rescan()
 
     # ------------------------------------------------------------------ 完了のお知らせ
