@@ -9,6 +9,7 @@ from mints_prep.ui.theme import (  # noqa: E402
     ACCENT,
     CONTROL_BG,
     HOVER_BG,
+    PRESSED_BG,
     SCROLL_THUMB,
     SCROLL_TROUGH,
     WINDOW_BG,
@@ -48,9 +49,16 @@ def test_entry_focus_border_uses_accent(root: tk.Tk):
     assert style.lookup("TEntry", "bordercolor", ["focus"]) == ACCENT
 
 
-def test_emphasis_button_keeps_bold_font(root: tk.Tk):
-    font = ttk.Style(root).lookup("Emphasis.TButton", "font")
-    assert "bold" in str(font)
+def test_accent_button_uses_accent_border_only(root: tk.Tk):
+    # 主要な操作ボタンは、地色を塗らず、枠線の色だけをアクセント色にする（UI設計方針）。
+    style = ttk.Style(root)
+    assert style.lookup("Accent.TButton", "bordercolor") == ACCENT
+    assert style.lookup("Accent.TButton", "background") == style.lookup("TButton", "background")
+
+
+def test_file_list_selection_uses_pressed_blue(root: tk.Tk):
+    style = ttk.Style(root)
+    assert style.lookup("Files.Treeview", "background", ["selected"]) == PRESSED_BG
 
 
 def test_scrollbar_thumb_darker_than_trough(root: tk.Tk):

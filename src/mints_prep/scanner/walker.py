@@ -31,6 +31,7 @@ from mints_prep.models import (
     FormatStatus,
     ScanResult,
 )
+from mints_prep.processors.updater import BACKUP_DIRNAME, is_batch_dir_name
 from mints_prep.scanner.classifier import classify
 
 
@@ -53,10 +54,34 @@ def _is_system_file(path: Path) -> bool:
 
 
 def _iter_files(root: Path, include_subfolders: bool):
+    """読み込むファイルを列挙する。
+
+    Ver200（その場で更新する方式）から、次の2つのフォルダを特別に扱う。
+    - 「元のファイル」フォルダ（更新前のファイルの控え・更新記録）は、
+      サブフォルダを含める設定でも読み込まない（提出するものではないため）。
+    - 「提出用_NN」フォルダ（200MB分割で本ツールが仕分けた先）は、サブフォルダを
+      含めない設定でも読み込む（更新の後に読み込み直したとき、仕分けたファイルが
+      一覧から消えないように）。並びは、提出用_01、提出用_02 …、その後に直下のファイル。
+    """
+    backup = root / BACKUP_DIRNAME
+
+    def _wanted(p: Path) -> bool:
+        return p.is_file() and not _is_system_file(p) and backup not in p.parents
+
+    batch_dirs = sorted(
+        (d for d in root.iterdir() if d.is_dir() and is_batch_dir_name(d.name)),
+        key=lambda d: d.name,
+    )
+    for d in batch_dirs:
+        yield from (p for p in sorted(d.rglob("*")) if _wanted(p))
     if include_subfolders:
-        yield from (p for p in root.rglob("*") if p.is_file() and not _is_system_file(p))
+        yield from (
+            p
+            for p in root.rglob("*")
+            if _wanted(p) and not any(d in p.parents for d in batch_dirs)
+        )
     else:
-        yield from (p for p in root.iterdir() if p.is_file() and not _is_system_file(p))
+        yield from (p for p in root.iterdir() if _wanted(p))
 
 
 def scan_file(path: Path, config: Config) -> FileRecord:

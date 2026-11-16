@@ -152,7 +152,7 @@ def test_tool_processable_findings_annotated():
 
     text = describe_expected_processing(record)
 
-    assert text.count("書き出し時に本ツールで処理できます") == 3
+    assert text.count("本ツールで処理できます") == 3
 
 
 def test_externally_fixed_findings_not_annotated():

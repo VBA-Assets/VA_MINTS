@@ -142,9 +142,10 @@ def merge_branch_group(
 ) -> None:
     """グループ内のPDFを枝番順に連結し、output_pathへ書き出す。
 
-    stamp=Trueの場合、各ソースファイルのページに、そのファイル自身の枝番
+    stamp=Trueの場合、各ソースファイルの1ページ目に、そのファイル自身の枝番
     ラベル（証拠番号処理・右上スタンプ）を焼き込んでから結合する
-    （準備の手引29頁「各枝番を区別できるよう...記載する」に対応）。
+    （準備の手引29頁「各枝番を区別できるよう...記載する」に対応）。各ソースの
+    2ページ目以降には押さない（2026-11-16 班長指示。単独ファイルと同じ）。
     """
     writer = PdfWriter()
     for member in group.members:
@@ -152,7 +153,7 @@ def merge_branch_group(
         writer.append(str(member.record.path))
         if stamp:
             assert stamp_config is not None
-            for page in writer.pages[start_index:]:
+            for page in writer.pages[start_index:start_index + 1]:
                 # 回転属性（/Rotate 90/270等）を持つページは、単独ファイルの
                 # スタンプ（evidence_stamp.stamp_pdf）と同様に、回転をページ
                 # 内容へ転写（見た目不変のまま/Rotateを0に正規化）してから
@@ -161,5 +162,10 @@ def merge_branch_group(
                 if (page.rotation or 0) % 360 != 0:
                     page.transfer_rotation_to_content()
                 stamp_pdf_page(page, member.match.evidence_number_label, stamp_config)
+    # pypdfは新しいPDFに作成ソフト名（Producer＝pypdf）を入れる。そのままだと、
+    # 結合したファイルを読み込み直したとき「メタデータあり」と検出され、済んだ
+    # はずの更新の後に、また処理の項目にチェックが付く。結合元の文書情報は
+    # append()では引き継がれないので、ここで消すのはpypdfが足す分だけ。
+    writer.metadata = None
     with open(output_path, "wb") as f:
         writer.write(f)

@@ -30,7 +30,8 @@ def test_every_button_icon_has_images():
         assert (ICON_DIR / f"{name}.png").exists() and (ICON_DIR / f"{name}_disabled.png").exists(), name
     assert (ICON_DIR / "LICENSE").exists()                      # Fluent UI System Icons（MIT License）
     assert icon_name("ファイルを読み込み") == "folder_open"
-    assert icon_name("ファイルを書き出し") == "save"
+    assert icon_name("ファイルを更新") == "save"
+    assert icon_name("元のファイルに戻す") == "arrow_undo"
 
 
 def test_ribbon_groups_and_buttons(root):
@@ -39,15 +40,15 @@ def test_ribbon_groups_and_buttons(root):
     rb.pack(fill="x")
     g = rb.group("読み込み")
     big = g.large("ファイルを読み込み", lambda: None, style="RibbonAccent.TButton")
-    g2 = rb.group("書き出し")
-    out = g2.large("ファイルを書き出し", lambda: None, style="RibbonAccent.TButton")
+    g2 = rb.group("更新")
+    out = g2.large("ファイルを更新", lambda: None, style="RibbonAccent.TButton")
     root.update()
     assert str(big.cget("compound")) == "top"
     assert big.cget("image") and out.cget("image")
     assert str(big.cget("takefocus")) in ("0", "False")
     out.state(["disabled"])                                     # 押せないときは灰色のアイコン
     assert "disabled" in str(out.cget("image"))
-    assert [g.title for g in rb.groups] == ["読み込み", "書き出し"]
+    assert [g.title for g in rb.groups] == ["読み込み", "更新"]
     rb.reflow(60)                                               # 狭いときは、組を次の段に送る
     # （update() を挟むと、非表示の窓では幅 1 の Configure で1段に戻るため、置き直した直後に確かめる）
     assert g.winfo_manager() == "grid" and g2.grid_info()["in"] != g.grid_info()["in"]

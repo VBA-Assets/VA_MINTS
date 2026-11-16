@@ -460,3 +460,56 @@ def test_rotate_option_not_offered_for_merge_groups(tmp_path: Path):
         not o.enabled and "向きが基本形と不一致" in o.label and "甲001-2" in o.label
         for o in options
     )
+
+
+def test_pane_warnings_do_not_repeat_remarks():
+    """右ペインの赤字の注意と備考に、同じ内容を二度書かない（2026-11-16 班長指摘）。
+    個人情報・墨消しの細目は赤字の下に並べ、言い換えの備考は外し、赤字にない備考は残す。"""
+    from mints_prep.models import PiiFinding, RedactionFinding
+    from mints_prep.ui.review_logic import build_pane_warnings
+
+    pii_details = (
+        "PDF本文にマイナンバーの可能性がある記載を検出（1ページ目）",
+        "PDF本文に電話番号の可能性がある記載を検出（2ページ目）",
+    )
+    redaction_details = ("1ページ目：塗りつぶし矩形（黒塗り等）の下に文字情報が残存している可能性（例：「ABC」）",)
+    record = FileRecord(
+        path=Path("陳述書.pdf"),
+        size_bytes=100,
+        format_status=FormatStatus.RECORD_READY,
+        detected_format="PDF",
+        classification=Classification.B_NEEDS_FIX,
+        filename_finding=FilenameFinding(length=6, exceeds_max_length=False, exceeds_warning_length=False),
+        pii_finding=PiiFinding(True, ("マイナンバー", "電話番号"), pii_details),
+        redaction_finding=RedactionFinding(True, (1,), redaction_details),
+        notes=[*redaction_details, *pii_details, "単体ファイルが200MBを超えています（250.0MB）。…",
+               "墨消し完全性の検証を実行できませんでした"],
+    )
+    labels = [
+        "墨消し・マーカーの下に文字情報が残存している疑いあり（1ページ目、要確認）",
+        "個人情報の可能性がある記載を検出しました（マイナンバー、電話番号）。意図した記載か確認してください",
+        "単体で250.0MB。圧縮又は分割なしには提出不可能",
+    ]
+
+    warnings, notes = build_pane_warnings(record, labels)
+
+    assert [w.details for w in warnings] == [redaction_details, pii_details, ()]
+    assert "（マイナンバー、電話番号）" not in warnings[1].text  # 種類は細目に書く
+    assert notes == ["墨消し完全性の検証を実行できませんでした"]  # 赤字にない備考だけ残る
+
+    # 結合グループの項目では、細目に組み替えず、言い換えの備考だけを外す。
+    group_warnings, _ = build_pane_warnings(record, labels, is_group=True)
+    assert [w.text for w in group_warnings] == labels
+
+    # 更新の対象でないファイルでは、検査の備考も外す。
+    unsupported = FileRecord(
+        path=Path("図面.zip"),
+        size_bytes=100,
+        format_status=FormatStatus.UNSUPPORTED,
+        detected_format="ZIP",
+        classification=Classification.D_UNSUPPORTED,
+        filename_finding=FilenameFinding(length=6, exceeds_max_length=False, exceeds_warning_length=False),
+        notes=["この形式のメタデータ検出には対応していません", "未対応形式のため処理対象外です"],
+    )
+    _, notes = build_pane_warnings(unsupported, ["未対応形式のため処理対象外"], is_target=False)
+    assert notes == []

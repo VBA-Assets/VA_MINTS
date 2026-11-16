@@ -6,7 +6,7 @@ Microsoft製品（Word等のダイアログ画面）の配色・質感に近づ�
 
 ttk.Styleはインタープリタ（Tkインスタンス）単位で共有されるため、
 MainWindow生成時にapply_theme()を一度呼べば、Toplevelダイアログ
-（write_review_dialog・checklist_dialog等）にも同じテーマが適用される。
+（完了のお知らせ等）にも同じテーマが適用される。
 """
 
 from __future__ import annotations
@@ -104,8 +104,26 @@ def apply_theme(root: tk.Tk) -> None:
         lightcolor=[("pressed", PRESSED_BG), ("active", HOVER_BG)],
         darkcolor=[("pressed", PRESSED_BG), ("active", HOVER_BG)],
     )
-    # 主要操作ボタン（読み込み・書き出し）：太字のみで強調（配色は共通）。
-    style.configure("Emphasis.TButton", font=(base_family, 10, "bold"), foreground="black")
+    # 主要な操作ボタン（お知らせの OK など）：地色は変えず、枠線だけをアクセント色にする
+    # （班長の UI 設計方針）。
+    style.configure("Accent.TButton", bordercolor=ACCENT)
+
+    # 左ペインのファイルの一覧（Ver200）：白地・細い灰色の枠。行の地色は分類（A〜D）の
+    # 色分け（app.py の _TAG_COLORS）で、選んだ行は押下時の青にする。
+    style.configure(
+        "Files.Treeview", background=FIELD_BG, fieldbackground=FIELD_BG, foreground=TEXT,
+        bordercolor=BORDER, lightcolor=FIELD_BG, darkcolor=FIELD_BG, rowheight=px(root, 22),
+    )
+    style.map(
+        "Files.Treeview",
+        background=[("selected", PRESSED_BG)],
+        foreground=[("selected", TEXT)],
+    )
+    style.configure(
+        "Files.Treeview.Heading", background=WINDOW_BG, foreground=TEXT, bordercolor=BORDER,
+        lightcolor=WINDOW_BG, darkcolor=WINDOW_BG, padding=(4, 2),
+    )
+    style.map("Files.Treeview.Heading", background=[("active", WINDOW_BG)])
 
     # リボンのボタン（VA Case・VA Document と同じ）：Word のリボンと同じく、ふだんは枠も地もなく、
     # 重ねたときだけ淡い青の地と枠を出す（班長の UI 方針の「常時、細い枠線」の、リボンだけの例外。

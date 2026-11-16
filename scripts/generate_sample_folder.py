@@ -43,6 +43,52 @@ from fixtures.generate_fixtures import (  # noqa: E402
 
 SAMPLES_DIR = ROOT / "samples"
 
+MULTIPAGE_NAME = "甲012 複数ページPDF（3ページ目が横向き）.pdf"
+
+
+def make_multipage_sample(path: Path, page_count: int = 5, landscape_page: int = 3) -> Path:
+    """複数ページのPDF（プレビューのページ送り・ページごとの向き補正の確かめ用）。
+
+    各ページの中央に、どのページかが一目で分かる大きな字（「第3頁／全5頁」）を
+    描く。landscape_page のページだけA4横置きにし、中身を右に90°倒して描く
+    （縦長の書面を横向きにスキャンしてしまったページを模す）。基本形〔A4=縦〕と
+    食い違うので、そのページだけが向き不一致として検出され、向き補正の既定
+    （左に90°）で読める向きに戻る。メタデータは除去しておく（向き不一致以外の
+    検出を出さない）。
+    """
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfgen import canvas
+
+    font = "HeiseiKakuGo-W5"
+    if font not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(UnicodeCIDFont(font))
+    c = canvas.Canvas(str(path), pagesize=A4)
+    for i in range(1, page_count + 1):
+        sideways = i == landscape_page
+        size = landscape(A4) if sideways else A4
+        c.setPageSize(size)
+        w, h = size
+        c.saveState()
+        c.translate(w / 2, h / 2)
+        if sideways:
+            c.rotate(-90)  # 中身を右に90°倒す（縦長の書面を横向きにスキャンした形）
+        fw, fh = A4  # 中身の座標は、いつも縦長のA4（中央が原点）
+        c.setFont(font, 12)
+        c.drawString(-fw / 2 + 72, fh / 2 - 72, "VA mints サンプル（複数ページ）")
+        c.setFont(font, 48)
+        c.drawCentredString(0, 20, f"第{i}頁")
+        c.setFont(font, 20)
+        c.drawCentredString(0, -30, f"全{page_count}頁")
+        if sideways:
+            c.setFont(font, 14)
+            c.drawCentredString(0, -70, "（横向きにスキャンしたページ。向き補正の「左に90°」で直る）")
+        c.restoreState()
+        c.showPage()
+    c.save()
+    return strip_pdf_metadata(path)
+
 
 def build() -> None:
     # OneDrive同期下ではフォルダ自体の削除がロックされることがあるため、
@@ -72,6 +118,10 @@ def build() -> None:
     make_a4_pdf_no_metadata(SAMPLES_DIR / "甲007-2 領収書.pdf")
     make_a4_pdf_no_metadata(SAMPLES_DIR / "甲007-3 領収書.pdf")
     make_a4_pdf_no_metadata(SAMPLES_DIR / "甲008 契約書.pdf")
+
+    # B：複数ページ（プレビューのページ送り〔右端のスクロールバー〕と、向き不一致の
+    # ページだけを回す向き補正の確かめ用）。3ページ目だけA4横置き。
+    make_multipage_sample(SAMPLES_DIR / MULTIPAGE_NAME)
 
     # B：要修正
     make_password_pdf(SAMPLES_DIR / "甲002 パスワード付きPDF.pdf")

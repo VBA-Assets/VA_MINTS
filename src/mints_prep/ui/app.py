@@ -1,29 +1,29 @@
 """VA mints メインウィンドウ（tkinter）。
 
-要件定義書4.1「フォルダ選択・スキャン機能」・4.2「ファイル状態把握機能」
-（4.6「墨消し完全性の検証」を含む）・4.3「出力ファイル名入力機能」・
-4.5「適合化処理」・4.7「証拠番号処理」・4.8「基本レポート出力機能」及び出力
-フォルダへの書き出し（第3章処理フロー⑥）を対象とする。
+Ver200 から、画面を3つのペインに分け、読み込んだフォルダの中のファイルを
+その場で更新する方式にした（2026-11-16 班長指示。要件定義書 第3章・第4章冒頭）。
 
-4.3の範囲は「ファイル名が証拠番号パターンに合致するかどうかの判定と、
-4.7（証拠番号処理）の適用候補への反映」にとどめる。ファイル名の内容が
-適切かどうかの判断（標目の付け方等）は利用者があらかじめ（エクスプローラー
-等で）行っている前提とし、ツール側での編集・自動採番機能は持たない。ファイル名が
-技術的にmintsの制約に反する場合（100文字超過・禁止文字）のみ、4.2の検出結果
-としてB（要修正）に反映する。
+- 左のペイン：読み込んだファイルの名前だけ（分類A〜Dで行を色分け。見出し・列はない）。
+- 中央のペイン：左で選んだファイルのプレビュー。右のペインでチェックを付けた処理
+  （証拠番号スタンプ・向き補正）を行った状態を表示し、チェックを付け外しすると
+  描き直す。ページは、右端のスクロールバー（又はホイール）で送る。
+- 右のペイン：処理の項目。すべての項目（PROCESS_ITEMS）を、ファイルを選ぶ前から
+  いつも同じ並びで表示し、そのファイルに適用するものにチェックが付く（必要と判断
+  したものには、読み込んだときに自動で付ける。ui/review_logic.py の既定値）。
+  そのファイルに当てはまらない項目は、チェックなし・操作不可で表示する。本ツール
+  では対処できない（検出のみの）事項は、項目の上に赤字で出す。
+（2026-11-16 班長指示：一覧の「分類」「処理」の列と見出し、プレビューの上のファイル名、
+「前のページ」「次のページ」のボタン、右ペインの「B：要修正」等のラベル、分類ごとの
+件数の行は、不要として外した。）
 
-書き出し対象はA（適合済み）・B（要修正）のうち記録対応形式のみ（C＝要変換は
-形式変換機能〔4.4〕がチェック専念方針により廃止のため対象外、D＝処理対象外も
-対象外）。ファイル名整形・メタデータ除去・
-証拠番号スタンプ・枝番ファイル結合はいずれもファイルの内容・体裁を変更する処理のため、
-CLAUDE.md「絶対に譲れない設計原則」3に従い、実行前に必ずユーザーの確認を得る。
-その具体的なUI実装として、書き出し対象を1件（又は1枝番ファイル結合グループ）ずつ
-処理する逐次レビュー画面（ui/write_review_dialog.py）を用いる。各回、対象の
-プレビュー（原本に証拠番号が既に記載されていないかを目視確認できるように）と、
-適用する処理を選ぶチェックボックス（ファイルの状態に応じた既定値つき、手動で
-変更可）を表示し、確定した内容をその場で書き出す。枝番ファイル結合のみ複数ファイルに
-またがる決定のため、対象一覧をグループ単位のチェックボックスでまとめて確認する
-別画面（ui/checklist_dialog.py）を経る。
+［ファイルを更新］は、すべてのファイルを、いまのチェックのとおりにまとめて更新する。
+ファイルの内容・体裁を変更する処理のため、CLAUDE.md「絶対に譲れない設計原則」3に
+従い、押したときに、処理の種類ごとの件数と、まだプレビューを表示していない
+ファイルの数を示して、確認を得る。更新する前のファイルは、同じフォルダの
+「元のファイル」フォルダに残し（processors/updater.py）、［元のファイルに戻す］で戻せる。
+更新が済むと読み込み直すので、済んだ項目のチェックは外れる。
+
+選択の状態と更新の計画は ui/workspace.py（Tk に依存しない）に置く。
 """
 
 from __future__ import annotations
@@ -37,45 +37,54 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import ImageOps, ImageTk
+
 from mints_prep import __version__, diagnostics
-from mints_prep.config import Config, FilenameConfig, load_config
+from mints_prep.config import Config, EvidenceStampConfig, load_config
 from mints_prep.models import Classification, FileRecord, ScanResult
-from mints_prep.naming.evidence_number import match_evidence_number
-from mints_prep.processors.batch_planner import (
-    Batch,
-    find_batch_conflicts,
-    plan_batches,
-    resolve_batch_dir,
-)
-from mints_prep.processors.evidence_merger import BranchGroup, find_branch_merge_groups
-from mints_prep.processors.filename_sanitizer import needs_sanitization, sanitize_filename
-from mints_prep.processors.output_writer import (
-    PlannedCopy,
-    copy_to_output,
-    make_deduped_name,
-    plan_output_filenames,
-    select_eligible_records,
-)
-from mints_prep.processors.report_writer import (
-    build_report_text,
-    format_evidence_sequence_warnings,
-    write_report,
+from mints_prep.processors.report_writer import format_evidence_sequence_warnings
+from mints_prep.processors.updater import (
+    BACKUP_DIRNAME,
+    Manifest,
+    has_restorable_update,
+    record_stamp_choice,
+    remove_stamp,
+    restore_all,
+    save_choices,
+    update_item,
 )
 from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.checklist_dialog import ChecklistItem, ask_checklist
-from mints_prep.ui import platform_support
-from mints_prep.ui.formatting import (
-    CLASSIFICATION_LABELS,
-    describe_expected_processing,
-    format_size_display,
-)
+from mints_prep.ui import platform_support, theme
+from mints_prep.ui.formatting import describe_expected_processing
 from mints_prep.ui.icons import IconSet
-from mints_prep.ui.review_logic import ReviewItem
+from mints_prep.ui.preview import (
+    fit_preview,
+    get_page_count,
+    render_preview,
+    render_preview_with_stamp,
+)
+from mints_prep.ui.review_logic import build_pane_warnings
 from mints_prep.ui.ribbon import Ribbon
 from mints_prep.ui.theme import apply_theme
 from mints_prep.ui.tooltip import Tooltip
-from mints_prep.ui.wrapping_table import ColumnSpec, WrappingTable
-from mints_prep.ui.write_review_dialog import _grab_when_viewable, review_and_confirm
+from mints_prep.user_settings import (
+    STAMP_FONT_SIZE_MAX,
+    STAMP_FONT_SIZE_MIN,
+    UserSettings,
+    apply_user_settings,
+    load_user_settings,
+    save_user_settings,
+)
+from mints_prep.ui.workspace import (
+    MERGE_KEY,
+    PaneView,
+    Selection,
+    Workspace,
+    describe_failure,
+    describe_update_plan,
+    format_skipped,
+    unstamped_image_line,
+)
 
 _CLASSIFICATION_TAGS = {
     Classification.A_COMPLIANT: "cls_a",
@@ -91,9 +100,32 @@ _TAG_COLORS = {
     "cls_d": "#f1f1f1",
 }
 
-# 証拠番号スタンプ（4.7）の対象形式。音声・動画には「ページ」の概念がなく
-# 焼き込み対象にならないため対象外とする。
-_STAMPABLE_FORMATS = {"PDF", "JPEG", "PNG"}
+# ウィンドウとメッセージの題名。VAプロジェクト共通の決まり（2026-11-16 班長決定）：
+# メインウィンドウの題名はツールの名前だけ、メッセージの題名もツールの名前とする
+# （完了・確認・エラーの別は、題名ではなくアイコンと本文で伝える）。
+APP_TITLE = "VA mints"
+
+# 右ペインにいつも表示する処理の項目（キー、当てはまらないときに出す名前）。
+# キーは ui/review_logic.py の ReviewOption.key・ui/workspace.py の MERGE_KEY と同じ。
+# Tkのインスタンス化を伴わずに単体テストできるよう、モジュールレベルの定数とする。
+PROCESS_ITEMS = (
+    ("sanitize", "ファイル名整形"),
+    ("strip_metadata", "メタデータ除去"),
+    ("rotate", "向き補正"),
+    ("stamp", "証拠番号スタンプ"),
+    (MERGE_KEY, "枝番ファイル結合"),
+)
+
+# スタンプ位置調整ボタン1回分の移動量（mm）。一次資料に定めはなく、UI操作上の
+# 実装値（CLAUDE.md「数値パラメータの設定ファイル化」原則が対象とする
+# mints側の制約値〔200MB・100文字等〕とは性質が異なるため、設定ファイル化は
+# せずここに定数として置く）。
+_POSITION_STEP_MM = 2.0
+
+# 本ツールでは対処できない（検出のみの）項目の文字色。操作不可に加えて赤字に
+# することで、対処が必要な検出事項であることを一目で分かるようにする。
+_UNFIXABLE_TEXT_COLOR = "#c00000"
+
 
 def _window_icon_path() -> Path:
     """ウィンドウアイコン（assets/VA_mints.ico）のパスを解決する。
@@ -109,29 +141,52 @@ def _window_icon_path() -> Path:
     return base / "assets" / "VA_mints.ico"
 
 
-# 結果一覧の列構成。Tkのインスタンス化を伴わずに単体テストできるよう、
-# モジュールレベルの定数として切り出す。
-RESULT_TABLE_COLUMNS = [
-    ColumnSpec("filename", "ファイル名", 220),
-    ColumnSpec("classification", "分類", 90),
-    ColumnSpec("format", "検出形式", 80),
-    ColumnSpec("size", "サイズ", 80),
-    ColumnSpec("processing", "検出事項", 400),
-    ColumnSpec("notes", "備考", 350),
-]
+def _grab_when_viewable(dialog: tk.Toplevel) -> None:
+    """モーダル化（grab_set）を、ウィンドウが可視になってから行う。
+
+    可視化前のgrab_setは環境によりTclError（grab failed: window not viewable）
+    になり得る。wait_visibility()で待つ方式は、テスト等でウィンドウが表示され
+    ない環境では永久に戻らないため使わず、失敗時にafterで再試行する。
+    """
+    try:
+        dialog.grab_set()
+    except tk.TclError:
+        dialog.after(50, lambda: _grab_when_viewable(dialog) if dialog.winfo_exists() else None)
+
+
+def preview_placeholder_text(record: FileRecord) -> str:
+    """プレビューを出せないときに、代わりに出す文。"""
+    if record.pdf_finding is not None and record.pdf_finding.has_password:
+        return "プレビュー非対応\n（パスワード付きファイル）"
+    if record.detected_format in ("MP3", "MP4"):
+        return "プレビュー非対応\n（音声・動画ファイル）"
+    if record.detected_format not in ("PDF", "JPEG", "PNG"):
+        return "プレビュー非対応\n（mints「記録」の対応形式ではないファイル）"
+    return "プレビューを生成できませんでした"
+
+
+def display_name(record: FileRecord, root: Path) -> str:
+    """左ペインに出す名前。サブフォルダ・「提出用_NN」の中のファイルは、フォルダから書く。"""
+    try:
+        return str(record.path.relative_to(root))
+    except ValueError:
+        return record.path.name
 
 
 class MainWindow(tk.Tk):
     def __init__(self, config: Config | None = None) -> None:
         super().__init__()
-        self.config_obj = config or load_config()
+        # config.yaml の設定（配布物の既定）と、［ファイル］→［オプション］で利用者が変えた
+        # 設定（%APPDATA%\VA mints\settings.json）を重ねたものを使う（user_settings.py）。
+        self._base_config = config or load_config()
+        self._user_settings = load_user_settings()
+        self.config_obj = apply_user_settings(self._base_config, self._user_settings)
         # 画面全体のテーマ（フラットデザイン・Microsoft系ダイアログの質感）。
         # ウィジェット生成前に一度だけ適用する（詳細はui/theme.py参照）。
         apply_theme(self)
-        # ウィンドウタイトルに、ツール名に続けてサブタイトル（このツールが
-        # 何であるか）を「ー」区切りで併記する（画面内のサブタイトル行は
-        # 廃止し、タイトルバーに集約）。
-        self.title("VA mints ー mints（民事裁判書類電子提出システム）「記録」提出前チェック・準備ツール")
+        # ウィンドウの題名は、ツールの名前だけにする（VAプロジェクト共通の決まり。
+        # 2026-11-16 班長決定。説明と版は［ヘルプ］の「VA mints について」に書く）。
+        self.title(APP_TITLE)
         # タイトルバー・タスクバーのアイコン（実行ファイル自体のアイコンは
         # mints_prep.specのEXE(icon=...)で別途埋め込まれる）。アイコンが
         # 見つからない・読めない場合は既定のままにする（起動を妨げない）。
@@ -141,19 +196,32 @@ class MainWindow(tk.Tk):
                 self.iconbitmap(str(icon_path))
             except tk.TclError:
                 pass
-        self.geometry("1300x700")
-        self.minsize(900, 500)
+        self.geometry("1300x760")
+        self.minsize(960, 560)
 
         self._input_dir_var = tk.StringVar(value="")
-        self._output_dir_var = tk.StringVar(value="")
         # 要件定義書4.1「入力フォルダ選択」：サブフォルダを含めるかはオプション。
         # 意図せず対象外の書類（他事件のファイル等）まで読み込む事故を避ける
         # ため、既定はOFF（トップレベルのみ）とする。
         self._include_subfolders_var = tk.BooleanVar(value=False)
         self._scan_result: ScanResult | None = None
+        self._workspace: Workspace | None = None
         self._queue: "queue.Queue[object]" = queue.Queue()
         # 起きた誤りの記録（型と場所だけ。診断情報〔ヘルプ→診断情報をコピー〕に載せる）。
         self._errors = diagnostics.ErrorLog()
+
+        # いま左ペインで選んでいるファイルと、そのプレビューの状態。
+        self._current: FileRecord | None = None
+        self._row_records: dict[str, FileRecord] = {}
+        self._page_index = 0
+        self._page_count = 1
+        self._preview_photo: ImageTk.PhotoImage | None = None  # GC対策で参照を保持
+        self._preview_job: str | None = None
+        self._preview_size = (0, 0)
+        self._wrap_widgets: list[tk.Widget] = []
+        self._position_label: ttk.Label | None = None
+        # 更新・復元の後の読み込み直しで、選び直すファイル（左ペインの名前）。
+        self._reselect_name: str | None = None
 
         self._build_menu()
         self._build_widgets()
@@ -170,23 +238,41 @@ class MainWindow(tk.Tk):
         text = self._input_dir_var.get().strip()
         return Path(text) if text else None
 
-    @property
-    def _output_dir(self) -> Path | None:
-        text = self._output_dir_var.get().strip()
-        return Path(text) if text else None
-
     # ------------------------------------------------------------------ メニュー
     def _build_menu(self) -> None:
         """メニューバー（［ヘルプ］→［診断情報をコピー］。2026-11-10 班長決定：Python のツールに、
         次の版上げのときに入れる）。"""
         bar = tk.Menu(self)
+        # ［ファイル］：リボンの3つのボタンと同じ操作（2026-11-16 班長指示）。押せる・
+        # 押せないは、メニューを開くたびに、リボンのボタンの状態に合わせる（読み込む
+        # までは更新できない、更新の記録がなければ戻せない、を二重に持たない）。
+        f = tk.Menu(bar, tearoff=False)
+        entries = (
+            ("ファイルを読み込み", self._start_scan, lambda: self._scan_button),
+            ("ファイルを更新", self._start_update, lambda: self._update_button),
+            ("元のファイルに戻す", self._start_restore, lambda: self._restore_button),
+        )
+        for label, command, _button in entries:
+            f.add_command(label=label, command=command)
+        # ［オプション］（2026-11-16 班長指示）：証拠番号スタンプの文字の大きさを変える。
+        # 3つの操作の後ろに区切り線を挟んで置く（_sync_file_menu の番号 0〜2 は変わらない）。
+        f.add_separator()
+        f.add_command(label="オプション...", command=self._open_options)
+
+        def _sync_file_menu() -> None:
+            for index, (_label, _command, button) in enumerate(entries):
+                disabled = "disabled" in button().state()
+                f.entryconfigure(index, state=tk.DISABLED if disabled else tk.NORMAL)
+
+        f.configure(postcommand=_sync_file_menu)
+        bar.add_cascade(label="ファイル", menu=f)
+        self._file_menu, self._sync_file_menu = f, _sync_file_menu
         h = tk.Menu(bar, tearoff=False)
         h.add_command(label="診断情報をコピー", command=self._copy_diagnostics)
         h.add_separator()
         h.add_command(
             label="VA mints について",
-            command=lambda: messagebox.showinfo(
-                "VA mints",
+            command=lambda: messagebox.showinfo(APP_TITLE,
                 f"VA mints  {__version__}\n"
                 "mints（民事裁判書類電子提出システム）「記録」提出前チェック・準備ツール\n\n"
                 "VBAアセット（vba-assets.net）\nMIT License",
@@ -196,12 +282,110 @@ class MainWindow(tk.Tk):
         bar.add_cascade(label="ヘルプ", menu=h)
         self.config(menu=bar)
 
+    # ------------------------------------------------------------------ オプション
+    def _open_options(self) -> None:
+        """［ファイル］→［オプション］：証拠番号スタンプの文字の大きさを変える。
+
+        既定は config.yaml の値（16ポイント）。変えた値は利用者ごとに保存し、次に
+        起動したときも使う。すでにスタンプを付けたファイルには影響しない（付け直すには、
+        スタンプのチェックを外して更新し、入れ直してもう一度更新する）。
+        """
+        default_size = self._base_config.evidence_stamp.font_size_pt
+        current = self.config_obj.evidence_stamp.font_size_pt
+
+        dialog = tk.Toplevel(self)
+        dialog.title("オプション")  # 子の画面は、その画面でする事の名前（題名の決まり）
+        dialog.transient(self)
+        dialog.resizable(False, False)
+        body = ttk.Frame(dialog, padding=(16, 14, 16, 8))
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        ttk.Label(body, text="証拠番号スタンプの文字の大きさ").grid(row=0, column=0, sticky="w")
+        size_var = tk.StringVar(value=f"{current:g}")
+        spin = ttk.Spinbox(
+            body, from_=STAMP_FONT_SIZE_MIN, to=STAMP_FONT_SIZE_MAX, increment=1,
+            textvariable=size_var, width=6, justify="right",
+        )
+        spin.grid(row=0, column=1, sticky="w", padx=(12, 4))
+        ttk.Label(body, text="ポイント").grid(row=0, column=2, sticky="w")
+        ttk.Label(
+            body,
+            text=(
+                f"既定：{default_size:g} ポイント（{STAMP_FONT_SIZE_MIN}〜{STAMP_FONT_SIZE_MAX}）\n"
+                "すでにスタンプを付けたファイルの大きさは変わりません。"
+            ),
+            foreground=theme.NOTE, justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        buttons = ttk.Frame(dialog, padding=(16, 4, 16, 14))
+        buttons.pack(side=tk.BOTTOM, fill=tk.X)
+
+        def _reset() -> None:
+            size_var.set(f"{default_size:g}")
+
+        def _ok() -> None:
+            text = size_var.get().strip()
+            try:
+                size = float(text)
+            except ValueError:
+                size = None
+            if size is None or not (STAMP_FONT_SIZE_MIN <= size <= STAMP_FONT_SIZE_MAX):
+                messagebox.showerror(
+                    APP_TITLE,
+                    f"文字の大きさは、{STAMP_FONT_SIZE_MIN}〜{STAMP_FONT_SIZE_MAX} の数で入れてください。",
+                    parent=dialog,
+                )
+                return
+            settings = UserSettings(stamp_font_size_pt=None if size == default_size else size)
+            try:
+                save_user_settings(settings)
+            except OSError as exc:
+                self._errors.record(exc, "オプションの保存")
+                messagebox.showerror(
+                    APP_TITLE,
+                    "設定を保存できませんでした。この画面を閉じるまでの間だけ、変えた大きさを使います。",
+                    parent=dialog,
+                )
+            self._user_settings = settings
+            self.config_obj = apply_user_settings(self._base_config, settings)
+            if self._workspace is not None:
+                self._workspace.config = self.config_obj
+            dialog.destroy()
+            if self._current is not None:
+                self._schedule_preview(0)
+
+        b = ttk.Button(buttons, text="キャンセル", command=dialog.destroy)
+        b.pack(side=tk.RIGHT, padx=(6, 0))
+        b = ttk.Button(buttons, text="OK", command=_ok, style="Accent.TButton")
+        b.pack(side=tk.RIGHT)
+        b = ttk.Button(buttons, text="既定に戻す", command=_reset)
+        b.pack(side=tk.LEFT)
+        b.tooltip = Tooltip(b, f"文字の大きさを、既定（{default_size:g} ポイント）に戻します。", above=True)
+
+        dialog.bind("<Return>", lambda _e: _ok())
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
+        # 小さな画面を、メインウィンドウの中央に出し、アイコンもそろえる（Tk の既定の
+        # 羽根のアイコン・画面左上ではなく）。
+        icon_path = _window_icon_path()
+        if icon_path.exists():
+            try:
+                dialog.iconbitmap(str(icon_path))
+            except tk.TclError:
+                pass
+        dialog.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - dialog.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - dialog.winfo_reqheight()) // 3
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        spin.focus_set()
+        spin.selection_range(0, tk.END)
+        _grab_when_viewable(dialog)
+        self.wait_window(dialog)
+
     def _copy_diagnostics(self) -> None:
         text = self._diagnostic_text()
         self.clipboard_clear()
         self.clipboard_append(text)
-        messagebox.showinfo(
-            "VA mints",
+        messagebox.showinfo(APP_TITLE,
             "診断情報をコピーしました。\n\n"
             "不具合を相談するときは、これを貼り付けて渡してください。版・環境・設定の数値・件数・"
             "誤りの起きた場所だけが入っていて、証拠・書面のファイル名や、ファイル・フォルダの場所は"
@@ -222,33 +406,40 @@ class MainWindow(tk.Tk):
                   f"ファイル名：上限 {c.filename.max_length} 字・警告 {c.filename.warning_length} 字・"
                   f"禁止文字 {len(c.filename.forbidden_chars)} 種",
                   f"証拠番号：符号 {len(c.evidence_number.symbols)} 種・数字 {c.evidence_number.digits} 桁",
-                  f"スタンプ：{c.evidence_stamp.font_size_pt:g}pt・上 {c.evidence_stamp.margin_top_mm:g}mm・"
+                  f"スタンプ：{c.evidence_stamp.font_size_pt:g}pt"
+                  f"（{'オプションで変更' if self._user_settings.stamp_font_size_pt is not None else '既定'}）・"
+                  f"上 {c.evidence_stamp.margin_top_mm:g}mm・"
                   f"右 {c.evidence_stamp.margin_right_mm:g}mm・見た目 {c.evidence_stamp.style}",
                   f"個人情報パターン：{len(c.pii_detection.patterns)} 件", ""]
         lines.append("■ 状態")
-        for label, path in (("入力フォルダの欄", self._input_dir), ("出力フォルダの欄", self._output_dir)):
-            if path is None:
-                lines.append(f"{label}：設定なし")
-            else:
-                try:
-                    exists = "フォルダがある" if path.is_dir() else "見つからない"
-                except OSError:
-                    exists = "確かめられない"
-                lines.append(f"{label}：設定あり（{exists}）")
+        path = self._input_dir
+        if path is None:
+            lines.append("入力フォルダの欄：設定なし")
+        else:
+            try:
+                exists = "フォルダがある" if path.is_dir() else "見つからない"
+            except OSError:
+                exists = "確かめられない"
+            lines.append(f"入力フォルダの欄：設定あり（{exists}）")
         lines.append(f"サブフォルダも含める：{'はい' if self._include_subfolders_var.get() else 'いいえ'}")
-        if self._scan_result is None:
+        ws = self._workspace
+        if self._scan_result is None or ws is None:
             lines.append("読み込み：まだ")
         else:
             counts = {c2: 0 for c2 in Classification}
             for record in self._scan_result.records:
                 counts[record.classification] += 1
-            checked = sum(1 for s in self._table.get_checked_states() if s)
+            plan = ws.plan_update()
             lines.append(
                 f"読み込み済み：全 {len(self._scan_result.records)} 件"
                 f"（A {counts[Classification.A_COMPLIANT]}・B {counts[Classification.B_NEEDS_FIX]}・"
-                f"C {counts[Classification.C_NEEDS_CONVERSION]}・D {counts[Classification.D_UNSUPPORTED]}）・"
-                f"チェック中 {checked} 件"
+                f"C {counts[Classification.C_NEEDS_CONVERSION]}・D {counts[Classification.D_UNSUPPORTED]}）"
             )
+            lines.append(
+                f"チェック中の処理：{sum(plan.counts.values())} 件・結合の候補 {len(ws.groups)} 組・"
+                f"提出回 {len(plan.batches)} 回・プレビューを表示したファイル {len(ws.viewed)} 件"
+            )
+            lines.append(f"更新の記録（「{BACKUP_DIRNAME}」フォルダ）：{len(ws.manifest.entries)} 件")
         records = self._errors.records
         lines += ["", f"■ 起きた誤り（新しいものから {min(len(records), d.SHOW_ERRORS)} 件。"
                       f"覚えているのは全 {len(records)} 件）"]
@@ -261,15 +452,11 @@ class MainWindow(tk.Tk):
     # ------------------------------------------------------------------ UI構築
     def _build_widgets(self) -> None:
         # 上部の操作は、VA Case シリーズと同じリボン（ui/ribbon.py）に置く。
-        # 組は「読み込み」「書き出し」の2つ。主要な操作（読み込み・書き出し）は
-        # 大きいボタン（いつも青い枠。RibbonAccent）、フォルダの欄などの部品は
-        # 組の中の block に置く。説明はマウスを重ねたときの説明書き（Tooltip）で出す。
+        # 組は「読み込み」「更新」の2つ。主要な操作（読み込み・更新）は大きいボタン
+        # （いつも青い枠。RibbonAccent）、フォルダの欄などの部品は組の中の block に置く。
         self._icons = IconSet(self)
         rb = Ribbon(self, self._icons)
         rb.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(6, 2))
-
-        # フォルダパス欄は、画面全幅まで伸ばさず固定幅にとどめる（従来方針）。
-        _FOLDER_ENTRY_WIDTH = 42
 
         # ---- 「読み込み」の組
         g = rb.group("読み込み")
@@ -277,19 +464,19 @@ class MainWindow(tk.Tk):
         ttk.Label(box, text="入力フォルダ", style="Ribbon.TLabel").grid(
             row=0, column=0, sticky="w", padx=(2, 6), pady=1
         )
-        e = ttk.Entry(box, textvariable=self._input_dir_var, width=_FOLDER_ENTRY_WIDTH)
+        # フォルダパス欄は、画面全幅まで伸ばさず固定幅にとどめる（従来方針）。
+        e = ttk.Entry(box, textvariable=self._input_dir_var, width=42)
         e.grid(row=0, column=1, sticky="w", pady=1)
         e.tooltip = Tooltip(e, "読み込むファイルの入ったフォルダです。手で入力するか、右の［...］で選びます。")
-        # フォルダ選択ボタンは、フォルダ参照ダイアログを開く操作であることが
-        # 隣接するテキスト欄から自明なため、Windows標準の「参照」ダイアログの
-        # 慣行に倣い「...」の省略表記にとどめる。
+        # フォルダ選択ボタンは、Windows標準の「参照」ダイアログの慣行に倣い
+        # 「...」の省略表記にとどめる。
         b = ttk.Button(box, text="...", width=3, command=self._choose_input_dir,
                        style="Ribbon.TButton", takefocus=False)
         b.grid(row=0, column=2, sticky="w", padx=(2, 0), pady=1)
         b.tooltip = Tooltip(b, "入力フォルダを選びます。")
         # 'clam'テーマのttk.Checkbuttonはチェック時のインジケータが「✕」
         # 形状に描画され、選択済みではなく利用不可のように見えるため、
-        # 標準tk.Checkbuttonを使う（write_review_dialogと同方針）。
+        # 標準tk.Checkbuttonを使う。
         cb = tk.Checkbutton(
             box,
             text="サブフォルダ内のファイルも含める",
@@ -299,81 +486,165 @@ class MainWindow(tk.Tk):
         cb.tooltip = Tooltip(
             cb,
             "チェックを入れると、入力フォルダの下のサブフォルダの中のファイルも読み込みます。"
-            "既定は入力フォルダ直下のみです（他事件のファイル等を意図せず読み込む事故を避けるため）。",
+            "既定は入力フォルダ直下のみです（他事件のファイル等を意図せず読み込む事故を避けるため）。"
+            f"「{BACKUP_DIRNAME}」フォルダは、どちらの場合も読み込みません。",
         )
         g.block(box)
         # ボタン名は「スキャン」を避ける（実物のスキャナー〔ScanSnap等〕による
-        # 読み取り操作と紛らわしいため）。要件定義書自体はこの処理を「スキャン」と
-        # 呼ぶが、これはツール内部の機能名であり、画面表示は「フォルダの中身を
-        # ツールに取り込む」動作として利用者に自然な「読み込み」に統一する。
+        # 読み取り操作と紛らわしいため）。
         self._scan_button = g.large(
             "ファイルを読み込み", self._start_scan, style="RibbonAccent.TButton",
             tip="入力フォルダの中のファイルを読み込み、mintsの制約（ファイル形式・サイズ・"
                 "ファイル名等）に適合するかを検査して、一覧に表示します。ファイルは変更しません。",
         )
 
-        # ---- 「書き出し」の組
-        g = rb.group("書き出し")
-        box = ttk.Frame(g.body, style="Ribbon.TFrame")
-        ttk.Label(box, text="出力フォルダ", style="Ribbon.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(2, 6), pady=1
+        # ---- 「更新」の組
+        g = rb.group("更新")
+        self._update_button = g.large(
+            "ファイルを更新", self._start_update, style="RibbonAccent.TButton",
+            tip=self._update_tip,
         )
-        e = ttk.Entry(box, textvariable=self._output_dir_var, width=_FOLDER_ENTRY_WIDTH)
-        e.grid(row=0, column=1, sticky="w", pady=1)
-        e.tooltip = Tooltip(e, "書き出したファイルを入れるフォルダです。手で入力するか、右の［...］で選びます。")
-        b = ttk.Button(box, text="...", width=3, command=self._choose_output_dir,
-                       style="Ribbon.TButton", takefocus=False)
-        b.grid(row=0, column=2, sticky="w", padx=(2, 0), pady=1)
-        b.tooltip = Tooltip(b, "出力フォルダを選びます。")
-        # 書き出し対象の注記は、常時表示のラベルからリボンの注記行に移す
-        # （内容は従来と同じ。詳しい説明は書き出しボタンの説明書きにも出る）。
-        ttk.Label(
-            box,
-            text="※ 対象はA（適合済み）・B（要修正）のみ",
-            style="RibbonNote.TLabel",
-        ).grid(row=1, column=0, columnspan=3, sticky="w", padx=(2, 0))
-        g.block(box)
-        self._write_button = g.large(
-            "ファイルを書き出し", self._start_output_write, style="RibbonAccent.TButton",
-            tip=self._write_tip,
+        self._restore_button = g.large(
+            "元のファイルに戻す", self._start_restore,
+            tip=self._restore_tip,
         )
-        # ファイルを読み込むまでは、書き出しは押せない（グレーアウト。2026-11-13 班長指示）。
-        # 読み込みが成功したとき（_poll_scan_queue）に押せるようにし、読み込みを
-        # やり直す間（_start_scan）は再び押せなくする。
-        self._write_button.state(["disabled"])
+        # ファイルを読み込むまでは、更新は押せない（グレーアウト。2026-11-13 班長指示）。
+        # ［元のファイルに戻す］は、読み込んだフォルダに更新の記録があるときだけ押せる。
+        self._update_button.state(["disabled"])
+        self._restore_button.state(["disabled"])
 
-        # ttk.Treeviewはセル内テキストの折り返し表示に対応していない（列幅を
-        # 超える文章は単純に切り詰められる）ため、Frame/Labelベースの自作表
-        # （WrappingTable）を使う。列は固定幅とする（ウィンドウ幅に応じて
-        # 伸縮する列を作ると、伸縮後の実際の幅とLabelのwraplengthがずれて
-        # 余白ばかり広がる見た目になるため）。
-        self._table = WrappingTable(
-            self, RESULT_TABLE_COLUMNS, tag_colors=_TAG_COLORS, with_checkbox=True
-        )
-        self._table.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-        # ステータス行：画面の最下部に、見出しなしで配置する（「状況：」の
-        # 見出し付き表示は見た目がしっくりこないとのフィードバックにより撤回）。
-        # フラットデザイン方針のため立体的な枠線（sunken）は使わず、上側に
-        # 細い区切り線（Separator）を1本引くだけの最下部バーとする。
-        # side=BOTTOMは先にpackした要素ほど画面の下端に近づくため、
-        # ステータス行→区切り線→サマリ行の順にpackする。
+        # ステータス行：画面の最下部に、見出しなしで配置する。フラットデザイン
+        # 方針のため立体的な枠線は使わず、上側に細い区切り線を1本引くだけとする。
+        # side=BOTTOMは先にpackした要素ほど画面の下端に近づく。
         self._status_label = ttk.Label(self, text="", anchor="w", padding=(8, 4))
         self._status_label.pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Separator(self, orient="horizontal").pack(side=tk.BOTTOM, fill=tk.X)
-
-        self._summary_label = ttk.Label(self, text="", padding=8, anchor="w", justify="left")
-        self._summary_label.pack(side=tk.BOTTOM, fill=tk.X)
-
-    def _write_tip(self) -> str:
-        """［ファイルを書き出し］の説明書き。読み込み前（押せない間）は、その旨を先に出す。"""
-        base = (
-            "一覧でチェックの入ったファイルを、1件ずつ内容を確認しながら出力フォルダへ"
-            "書き出します。書き出し対象はA（適合済み）・B（要修正）のみです"
-            "（C＝要変換／D＝対象外は対象外）。"
+        # 号証の連番・欠番チェック（4.7）は複数ファイルにまたがる検出結果で、右ペイン
+        # （1ファイルずつ）には収まらないため、読み込んだ時点からここに出し続ける。
+        # 疑いのないときは、行ごと出さない（_set_sequence_text）。
+        self._sequence_label = ttk.Label(
+            self, text="", padding=(8, 2, 8, 4), anchor="w", justify="left",
+            foreground=_UNFIXABLE_TEXT_COLOR,
         )
-        if self._scan_result is None:
+
+        # 3つのペイン。ttk.Panedwindow は最小幅を指定できないため、classic の
+        # tk.PanedWindow を使う（班長の UI 設計方針のとおり）。
+        px = lambda n: theme.px(self, n)  # noqa: E731
+        panes = tk.PanedWindow(
+            self, orient=tk.HORIZONTAL, sashwidth=px(5), bd=0, bg=theme.WINDOW_BG, sashrelief=tk.FLAT
+        )
+        panes.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(6, 4))
+        self._panes = panes
+        left = ttk.Frame(panes)
+        center = ttk.Frame(panes)
+        right = ttk.Frame(panes)
+        panes.add(left, minsize=px(180), width=px(330), stretch="never")
+        panes.add(center, minsize=px(260), stretch="always")
+        panes.add(right, minsize=px(260), width=px(420), stretch="never")
+        self._build_file_list(left)
+        self._build_preview(center)
+        self._build_options_pane(right)
+
+    def _build_file_list(self, parent: ttk.Frame) -> None:
+        """左のペイン：読み込んだファイルの名前。"""
+        # 名前だけを並べる（見出し・列なし。2026-11-16 班長指示）。
+        tree = ttk.Treeview(parent, show="tree", selectmode="browse", style="Files.Treeview")
+        tree.column("#0", width=theme.px(self, 300), minwidth=theme.px(self, 100), stretch=True)
+        for tag, color in _TAG_COLORS.items():
+            tree.tag_configure(tag, background=color)
+        scroll = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree.bind("<<TreeviewSelect>>", self._on_select_file)
+        self._tree = tree
+
+    def _build_preview(self, parent: ttk.Frame) -> None:
+        """中央のペイン：選んだファイルのプレビュー（チェックした処理を行った状態）。"""
+        # ページ送りは、右端のスクロールバーで行う（2026-11-16 班長指示。「前のページ」
+        # 「次のページ」のボタンは外した）。1ページを枠に収めて表示し、つまみ・矢印・
+        # ホイールで前後のページへ移る。
+        self._page_scroll = ttk.Scrollbar(parent, orient="vertical", command=self._on_page_scroll)
+        self._page_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        # いま何ページ目か（検出結果は「3ページ目」のようにページで示すため、複数ページの
+        # ときだけ小さく出す）。
+        self._page_label = ttk.Label(parent, text="", anchor="e", foreground=theme.NOTE,
+                                     padding=(8, 1, 8, 0))
+        self._page_label.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # 画像を表示するLabelは、読み込み前の大きさを確保できるclassicのtk.Labelを使う。
+        self._preview_label = tk.Label(
+            parent, anchor="center", justify="center", bg=theme.WINDOW_BG, fg=theme.NOTE,
+            bd=0, highlightthickness=1, highlightbackground=theme.BORDER,
+            text="［ファイルを読み込み］で読み込んだファイルを、左の一覧で選ぶと、\nここにプレビューを表示します。",
+        )
+        self._preview_label.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=(8, 2))
+        self._preview_label.bind("<Configure>", self._on_preview_resize)
+        self._preview_label.bind("<MouseWheel>", self._on_page_wheel)
+        self._update_page_nav()
+
+    def _build_options_pane(self, parent: ttk.Frame) -> None:
+        """右のペイン：処理の項目（縦に長くなり得るので、スクロールできる枠に入れる）。"""
+        canvas = tk.Canvas(parent, bg=theme.WINDOW_BG, bd=0, highlightthickness=0)
+        scroll = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scroll.set)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas, padding=(8, 2, 8, 8))
+        window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_canvas_resize(event: tk.Event) -> None:
+            canvas.itemconfigure(window, width=event.width)
+            self._apply_wraplength()
+
+        canvas.bind("<Configure>", _on_canvas_resize)
+        self._options_canvas = canvas
+        self._options_frame = inner
+        self._show_options_placeholder()
+
+    def _options_wraplength(self) -> int:
+        return max(theme.px(self, 160), self._options_canvas.winfo_width() - theme.px(self, 48))
+
+    def _apply_wraplength(self) -> None:
+        wrap = self._options_wraplength()
+        for w in self._wrap_widgets:
+            if w.winfo_exists():
+                w.configure(wraplength=wrap - getattr(w, "_indent", 0))
+
+    def _bind_wheel(self, widget: tk.Misc) -> None:
+        """右ペインの中のどこでホイールを回しても、右ペインがスクロールするようにする。"""
+        def _wheel(event: tk.Event) -> str:
+            first, last = self._options_canvas.yview()
+            if first <= 0.0 and last >= 1.0:
+                return "break"  # 全部見えているときは動かさない
+            self._options_canvas.yview_scroll(
+                platform_support.mousewheel_units(self, event.delta, -int(event.delta / 120) * 3), "units"
+            )
+            return "break"
+
+        widget.bind("<MouseWheel>", _wheel)
+        for child in widget.winfo_children():
+            self._bind_wheel(child)
+
+    # 説明書き（読み込み前・記録のないときは、押せない理由を先に出す）
+    def _update_tip(self) -> str:
+        base = (
+            "すべてのファイルを、右の「処理の項目」でチェックの入っている内容のとおりに更新します。"
+            "押すと、処理ごとの件数を示して確認します。"
+            f"更新する前のファイルは、同じフォルダの「{BACKUP_DIRNAME}」フォルダに残ります。"
+        )
+        if self._workspace is None:
             return "先に［ファイルを読み込み］でファイルを読み込むと、押せるようになります。" + base
+        return base
+
+    def _restore_tip(self) -> str:
+        base = (
+            f"［ファイルを更新］で更新したファイルを、「{BACKUP_DIRNAME}」フォルダに残した"
+            "更新前のファイルに戻します。更新の後に他のアプリで直した内容も、元に戻ります。"
+        )
+        if "disabled" in self._restore_button.state():
+            return "読み込んだフォルダに、このツールで更新したファイルがあるときに押せます。" + base
         return base
 
     # ------------------------------------------------------------------ フォルダ選択
@@ -382,42 +653,33 @@ class MainWindow(tk.Tk):
         if selected:
             self._input_dir_var.set(selected)
 
-    def _choose_output_dir(self) -> None:
-        selected = filedialog.askdirectory(title="出力フォルダを選択", mustexist=True)
-        if not selected:
-            return
-        candidate = Path(selected)
-        if self._input_dir is not None and candidate == self._input_dir:
-            # 要件定義書4.1「出力フォルダ選択」：入力フォルダと同一指定も許容するが、
-            # 上書き確認を必須とする。
-            proceed = messagebox.askyesno(
-                "確認",
-                "出力フォルダが入力フォルダと同一です。\n"
-                "処理結果の書き出し時に元ファイルを上書きする可能性があります。続行しますか？",
-            )
-            if not proceed:
-                return
-        self._output_dir_var.set(selected)
-
     # ------------------------------------------------------------------ 読み込み実行
     def _start_scan(self) -> None:
         input_dir = self._input_dir
         if input_dir is None:
-            messagebox.showerror("エラー", "入力フォルダを選択してください。")
+            messagebox.showerror(APP_TITLE, "入力フォルダを選択してください。")
             return
         if not input_dir.is_dir():
-            messagebox.showerror("エラー", f"入力フォルダが見つかりません：{input_dir}")
+            messagebox.showerror(APP_TITLE, f"入力フォルダが見つかりません：{input_dir}")
             return
+        if input_dir.name == BACKUP_DIRNAME:
+            messagebox.showerror(APP_TITLE,
+                f"「{BACKUP_DIRNAME}」フォルダは、更新する前のファイルを残しておくフォルダのため、"
+                "入力フォルダにできません。1つ上のフォルダを選んでください。",
+            )
+            return
+        self._scan(input_dir, self._include_subfolders_var.get())
 
+    def _scan(self, input_dir: Path, include_subfolders: bool) -> None:
         self._scan_button.config(state=tk.DISABLED)
-        # 読み込み直しの間も、書き出しは押せなくする（結果が入れ替わる途中のため）。
-        self._write_button.state(["disabled"])
+        # 読み込み直しの間は、更新も復元も押せなくする（結果が入れ替わる途中のため）。
+        self._update_button.state(["disabled"])
+        self._restore_button.state(["disabled"])
         self._status_label.config(text="読み込み中...")
-        self._table.clear()
+        self._clear_file_list()
 
         # input_dir・サブフォルダ設定はメインスレッドで確定させ、ワーカー
         # スレッドには値として渡す（別スレッドから直接Tkの変数を読み取らない）。
-        include_subfolders = self._include_subfolders_var.get()
         thread = threading.Thread(
             target=self._run_scan_worker, args=(input_dir, include_subfolders), daemon=True
         )
@@ -443,541 +705,629 @@ class MainWindow(tk.Tk):
         self._scan_button.config(state=tk.NORMAL)
         if isinstance(item, Exception):
             self._errors.record(item, "読み込み")
-            # 前回の読み込み結果を破棄する（残したままだと、テーブルは空なのに
-            # 「ファイルを書き出し」が前回結果に基づく紛らわしい動きをする）。
+            # 前回の読み込み結果を破棄する（残したままだと、一覧は空なのに
+            # ［ファイルを更新］が前回の結果に基づく紛らわしい動きをする）。
             self._scan_result = None
-            self._summary_label.config(text="")
+            self._workspace = None
+            self._set_sequence_text("")
             self._status_label.config(text="読み込みに失敗しました。")
-            messagebox.showerror("エラー", f"読み込み中にエラーが発生しました：\n{item}")
+            messagebox.showerror(APP_TITLE, f"読み込み中にエラーが発生しました：\n{item}")
             return
 
         self._scan_result = item
-        self._populate_table(item)
-        # 読み込みが済んだので、書き出しを押せるようにする（0件でも、押せば
-        # 「書き出し対象がありません」の案内が出る）。
-        self._write_button.state(["!disabled"])
+        try:
+            manifest = Manifest.load(item.root)
+        except ValueError as exc:
+            self._errors.record(exc, "更新記録の読み込み")
+            manifest = Manifest()
+            messagebox.showwarning(APP_TITLE,
+                f"「{BACKUP_DIRNAME}」フォルダの更新の記録を読めませんでした。\n"
+                "以前の更新で済ませた処理（証拠番号スタンプなど）にも、チェックが付きます。"
+                "プレビューで確かめてから更新してください。［元のファイルに戻す］は使えません。",
+            )
+        self._workspace = Workspace(item, self.config_obj, manifest)
+        self._populate_file_list(item)
+        self._update_button.state(["!disabled"])
+        self._restore_button.state(["!disabled"] if manifest else ["disabled"])
 
-    # ------------------------------------------------------------------ 結果表示
-    def _populate_table(self, result: ScanResult) -> None:
-        counts = {c: 0 for c in Classification}
+    # ------------------------------------------------------------------ 左ペイン
+    def _clear_file_list(self) -> None:
+        self._tree.delete(*self._tree.get_children())
+        self._row_records = {}
+        self._current = None
+        self._show_options_placeholder()
+        self._show_preview_text(
+            "［ファイルを読み込み］で読み込んだファイルを、左の一覧で選ぶと、\nここにプレビューを表示します。"
+        )
+        self._page_index, self._page_count = 0, 1
+        self._update_page_nav()
+
+    def _set_sequence_text(self, text: str) -> None:
+        """号証の連番・欠番の疑いの行。疑いのないときは、行ごと隠す。"""
+        self._sequence_label.config(text=text)
+        if text:
+            self._sequence_label.pack(side=tk.BOTTOM, fill=tk.X, before=self._panes)
+        else:
+            self._sequence_label.pack_forget()
+
+    def _populate_file_list(self, result: ScanResult) -> None:
+        select_iid = None
         for record in result.records:
-            counts[record.classification] += 1
-            evidence_match = match_evidence_number(
-                record.path.name, self.config_obj.evidence_number
+            name = display_name(record, result.root)
+            iid = self._tree.insert(
+                "", "end", text=name, tags=(_CLASSIFICATION_TAGS[record.classification],)
             )
-            # 「証拠番号処理の適用候補」表示は、実際に逐次レビューでスタンプ・
-            # 結合の選択肢が提示されるファイルに限る。MP3等の非対象形式や
-            # パスワード付きPDFにまで候補表示すると、一覧では「適用候補」なのに
-            # レビュー画面では選択肢が出ない、という不整合になる
-            # （_build_plan_and_batchesのスタンプ対象判定と同じ条件）。
-            if evidence_match is not None:
-                stampable = record.detected_format in _STAMPABLE_FORMATS and not (
-                    record.pdf_finding is not None and record.pdf_finding.has_password
-                )
-                if not stampable:
-                    evidence_match = None
-            # 対象選択チェックボックス（4.1節）：書き出し対象になり得るのは
-            # A・B分類のみ（C・Dはselect_eligible_recordsで常に除外される）
-            # のため、C・Dの行はチェックOFF・操作不可（グレーアウト）で表示
-            # し、選択の余地がないことを視覚的に示す。
-            selectable = record.classification in (
-                Classification.A_COMPLIANT,
-                Classification.B_NEEDS_FIX,
-            )
-            self._table.add_row(
-                (
-                    record.path.name,
-                    CLASSIFICATION_LABELS[record.classification],
-                    record.detected_format,
-                    format_size_display(record.size_bytes),
-                    describe_expected_processing(record, evidence_match),
-                    "; ".join(record.notes),
-                ),
-                tag=_CLASSIFICATION_TAGS[record.classification],
-                checked=selectable,
-                checkable=selectable,
-            )
+            self._row_records[iid] = record
+            if name == self._reselect_name:
+                select_iid = iid
+        self._reselect_name = None
 
-        total = len(result.records)
-        summary = (
-            f"合計 {total} 件　|　"
-            f"A：適合済み {counts[Classification.A_COMPLIANT]} 件　"
-            f"B：要修正 {counts[Classification.B_NEEDS_FIX]} 件　"
-            f"C：要変換 {counts[Classification.C_NEEDS_CONVERSION]} 件　"
-            f"D：対象外 {counts[Classification.D_UNSUPPORTED]} 件"
-        )
-        self._summary_label.config(text=summary)
-        self._status_label.config(text="読み込み完了")
-
-    def _build_plan_and_batches(
-        self, records: list[FileRecord], merge_groups: list[BranchGroup]
-    ) -> tuple[list[PlannedCopy], list[Batch]]:
-        """既定推奨（自動検出結果をすべて適用したと仮定）の書き出し計画と
-        バッチ割当てを構築する。
-
-        merge_groupsに含まれるメンバーは結合対象として除外し、残りを個別に
-        扱う。上書き警告を最優先で表示するための事前計画（結合候補すべてを
-        仮に結合したもの）と、枝番結合確認後の本番計画（確定した結合グループ
-        のみ）の両方をこの関数で組み立てる（重複を避けるための共通化）。
-        """
-        merged_member_paths = {m.record.path for group in merge_groups for m in group.members}
-        remaining = [r for r in records if r.path not in merged_member_paths]
-
-        sanitized_names: dict[Path, str] = {
-            r.path: sanitize_filename(r.path.name, self.config_obj.filename)
-            for r in remaining
-            if needs_sanitization(r.filename_finding)
-        }
-        strip_metadata_paths: set[Path] = {
-            r.path
-            for r in remaining
-            if r.metadata_finding is not None and r.metadata_finding.has_metadata
-        }
-        stamp_labels: dict[Path, str] = {}
-        for r in remaining:
-            if r.detected_format not in _STAMPABLE_FORMATS:
-                continue
-            if r.pdf_finding is not None and r.pdf_finding.has_password:
-                # パスワード付きPDFは復号キーがないと内容を読めず、スタンプ
-                # 処理自体が実行できない（先にパスワード解除が必要）。
-                continue
-            match = match_evidence_number(r.path.name, self.config_obj.evidence_number)
-            if match is not None:
-                stamp_labels[r.path] = match.evidence_number_label
-
-        planned = plan_output_filenames(
-            remaining,
-            sanitized_names,
-            strip_metadata_paths,
-            stamp_labels=stamp_labels,
-            merge_groups=merge_groups,
-            stamp_merge_sources=True,
-            filename_config=self.config_obj.filename,
-        )
-
-        # 要件定義書4.5「200MB分割」：1回のアップロード合計上限（200MB）を
-        # 超える場合に備え、提出回ごとのバッチへ仕分ける。ファイル自体を
-        # 変更しない処理のため確認UIの対象外。バッチの割当ては、後続の逐次
-        # レビューでの個別選択（整形の有無等）とは独立に決定してよい
-        # （割当ての基準は証拠番号のまとまりと合計サイズであり、ファイル名の
-        # 整形有無では変わらないため）。
-        batches = plan_batches(planned, self.config_obj.upload, self.config_obj.evidence_number)
-        return planned, batches
-
-    # ------------------------------------------------------------------ 出力フォルダへの書き出し
-    def _start_output_write(self) -> None:
-        if self._scan_result is None:
-            messagebox.showerror("エラー", "先にフォルダを読み込んでください。")
-            return
-        output_dir = self._output_dir
-        if output_dir is None:
-            messagebox.showerror("エラー", "出力フォルダを選択してください。")
-            return
-        if not output_dir.is_dir():
-            messagebox.showerror("エラー", f"出力フォルダが見つかりません：{output_dir}")
-            return
-
-        all_eligible = select_eligible_records(self._scan_result.records)
-        if not all_eligible:
-            messagebox.showinfo("書き出し", "書き出し対象のファイル（A・B分類）がありません。")
-            return
-
-        # スキャン結果一覧の対象選択チェックボックス（4.1節）で対象から外された
-        # ファイルは、この回の書き出しから除外する。外部アプリで一部のファイル
-        # だけを修正して再処理したい場合に、フォルダ全体を毎回やり直さずに
-        # 済むようにするための機能。行の並び順（get_checked_states）は
-        # _populate_tableでのadd_row呼び出し順＝self._scan_result.recordsの
-        # 順序と一致する前提。
-        checked_states = self._table.get_checked_states()
-        checked_paths = {
-            record.path
-            for record, checked in zip(self._scan_result.records, checked_states)
-            if checked
-        }
-        eligible = [r for r in all_eligible if r.path in checked_paths]
-        if not eligible:
-            messagebox.showinfo(
-                "書き出し",
-                "書き出し対象として選択されているファイルがありません。"
-                "一覧左端のチェックボックスをご確認ください。",
-            )
-            return
-
-        # 要件定義書4.7「枝番ファイル結合」の候補検出（判定のみ、確認はまだ
-        # 行わない）。上書き警告を最優先で表示するための事前計画づくりに使う。
-        merge_groups = find_branch_merge_groups(eligible, self.config_obj.evidence_number)
-
-        # 出力フォルダに既に同名ファイルがある場合の上書き警告を、他の確認・
-        # 警告より先に最優先で表示する。ユーザーが以降の枝番結合確認・
-        # ファイル別逐次レビューに時間をかける前に、続行するかどうかを
-        # 早期に判断できるようにするため。結合候補は（実際の確認前だが）
-        # すべて結合されるものと仮定した既定計画で判定する。レビューでの
-        # 選択変更（整形の辞退・結合の辞退等）により最終ファイル名がこの
-        # 事前判定と変わる場合は、書き出し直前に確定名で再チェックする
-        # （後述の逐次ループ内）。
-        _, preview_batches = self._build_plan_and_batches(eligible, merge_groups)
-        conflicts = find_batch_conflicts(preview_batches, output_dir)
-        if conflicts:
-            conflict_list = "\n".join(f"・{name}" for name in conflicts[:20])
-            if len(conflicts) > 20:
-                conflict_list += f"\n...ほか{len(conflicts) - 20}件"
-            proceed = messagebox.askyesno(
-                "上書きの確認",
-                f"出力フォルダには同名のファイルが既に{len(conflicts)}件あります。"
-                "続行すると、これらのファイルは上書きされます。\n\n"
-                f"{conflict_list}\n\n続行しますか？",
-            )
-            if not proceed:
-                return
-
-        # 要件定義書4.5「単体ファイル200MB超過の検出・警告」：合計サイズの
-        # 200MB分割では解決できない、圧縮・分割（チェック専念方針により
-        # 実行機能は廃止）なしには原理的に提出不可能な重大警告のため、
-        # 書き出し実行の直前に必ず明示する（検出・警告にとどめ、処理は
-        # ブロックしない）。
-        oversized = [r for r in eligible if r.exceeds_single_file_limit]
-        if oversized:
-            limit_mb = f"{self.config_obj.upload.max_total_mb:g}MB"
-            oversized_list = "\n".join(
-                f"・{r.path.name}（{r.size_mb:.1f}MB）" for r in oversized[:20]
-            )
-            if len(oversized) > 20:
-                oversized_list += f"\n...ほか{len(oversized) - 20}件"
-            messagebox.showwarning(
-                f"単体で{limit_mb}を超えるファイルがあります",
-                f"以下の{len(oversized)}件は単体で{limit_mb}を超えており、圧縮又は分割を"
-                "行わない限りmintsへ提出できません。\n\n"
-                f"{oversized_list}\n\n"
-                "このツールは検出・警告のみを行い、圧縮・分割の実行機能はまだ"
-                "提供していません。書き出し自体は続行しますが、これらのファイルは"
-                "別途対処が必要です。",
-            )
-
-        # 要件定義書4.7「枝番ファイル結合」：複数ファイルにまたがる決定のため、以降の
-        # 1件単位の逐次レビュー画面にはなじまず、候補一覧をグループ単位の
-        # チェックボックスでまとめて提示する（CLAUDE.md「絶対に譲れない設計
-        # 原則」3「チェックボックスで選択」）。結合対象となったファイルは、
-        # 以降の個別処理（ファイル名整形・単独スタンプ等）の対象から除外する。
-        confirmed_merge_groups: list[BranchGroup] = []
-        if merge_groups:
-            checklist_items = [
-                ChecklistItem(
-                    key=str(i),
-                    before_text="、".join(m.record.path.name for m in group.members),
-                    after_text=f"→ {group.output_filename} へ結合（{len(group.members)}件）",
-                    default_checked=True,
-                )
-                for i, group in enumerate(merge_groups)
-            ]
-            choices = ask_checklist(
-                self,
-                "枝番ファイル結合の確認",
-                "以下のファイル群は、同一の証拠番号（枝番違い）と判定されました。"
-                "準備の手引の規定により、枝番のある証拠は1つのファイルにまとめて"
-                "提出することが想定されています。結合するグループのチェックを"
-                "入れたまま実行してください（外すと、そのグループは結合せず"
-                "個別のまま書き出します）。",
-                checklist_items,
-            )
-            if choices:
-                confirmed_merge_groups = [
-                    group for i, group in enumerate(merge_groups) if choices.get(str(i), False)
-                ]
-
-        # 要件定義書4.5「200MB分割」：確定した結合グループを反映し、実際に
-        # 書き出す計画・バッチ割当てを構築する。
-        planned, batches = self._build_plan_and_batches(eligible, confirmed_merge_groups)
-
-        # 要件定義書4.7「号証の連番・欠番チェック」：複数ファイルにまたがる
-        # 検出結果のため、1件ずつの逐次レビュー画面（下記ループ）には自然に
-        # 収まらない。対象ファイル確定時点（この時点のplanned）の出力ファイル名
-        # から算出し、逐次レビューが始まる前に一度だけ表示する。個別のレビューで
-        # チェックを外して未対処にできる項目とは異なり、この結果自体を本ツールが
-        # 直接解消する手段はないため、確認のみ（実行可否の選択は伴わない）。
+        # 要件定義書4.7「号証の連番・欠番チェック」：読み込んだ時点のファイル名で判定する。
         sequence_lines = format_evidence_sequence_warnings(
-            (item.output_filename for item in planned), self.config_obj.evidence_number
+            (r.path.name for r in self._workspace.eligible), self.config_obj.evidence_number
         )
         if sequence_lines:
-            shown = "\n".join(sequence_lines[:20])
-            if len(sequence_lines) > 20:
-                shown += f"\n...ほか{len(sequence_lines) - 20}件"
-            messagebox.showwarning(
-                "号証の連番・欠番チェック",
-                "号証の連番・欠番の疑いがあります。提出前にご確認ください。\n\n" + shown,
-            )
+            shown = "　".join(line.removeprefix("・") for line in sequence_lines[:6])
+            if len(sequence_lines) > 6:
+                shown += f"　...ほか{len(sequence_lines) - 6}件"
+            self._set_sequence_text(f"号証の連番・欠番の疑い：{shown}")
+        else:
+            self._set_sequence_text("")
+        self._status_label.config(text="読み込み完了")
 
-        self._write_button.config(state=tk.DISABLED)
-        self._status_label.config(text="書き出し中...")
+        rows = self._tree.get_children()
+        if rows:
+            target = select_iid or rows[0]
+            self._tree.selection_set(target)
+            self._tree.focus(target)
+            self._tree.see(target)
+
+    def _on_select_file(self, _event: tk.Event | None = None) -> None:
+        selection = self._tree.selection()
+        if not selection or self._workspace is None:
+            return
+        record = self._row_records.get(selection[0])
+        if record is None or record is self._current:
+            return
+        self._current = record
+        self._workspace.mark_viewed(record)
+        self._page_index = 0
+        self._page_count = max(1, get_page_count(record))
+        self._update_page_nav()
+        self._rebuild_options()
+        self._schedule_preview(0)
+
+    # ------------------------------------------------------------------ 右ペイン
+    def _reset_options_frame(self) -> None:
+        for child in self._options_frame.winfo_children():
+            child.destroy()
+        self._wrap_widgets = []
+        self._position_label = None
+        self._options_canvas.yview_moveto(0)
+
+    def _wrap_label(self, text: str, indent: int = 0, **kw) -> ttk.Label:
+        """右ペインの、折り返す文。indent：左の字下げ（画素）。その分、折り返し幅を狭める。"""
+        label = ttk.Label(
+            self._options_frame, text=text, wraplength=self._options_wraplength() - indent,
+            justify="left", **kw
+        )
+        label._indent = indent
+        self._wrap_widgets.append(label)
+        return label
+
+    def _show_options_placeholder(self) -> None:
+        """ファイルを選ぶ前：すべての項目を、操作不可で並べておく。"""
+        self._reset_options_frame()
+        self._build_process_items(None)
+        self._bind_wheel(self._options_frame)
+
+    def _rebuild_options(self) -> None:
+        record, ws = self._current, self._workspace
+        self._reset_options_frame()
+        if record is None or ws is None:
+            self._build_process_items(None)
+            self._bind_wheel(self._options_frame)
+            return
+        frame = self._options_frame
+
+        self._wrap_label(record.path.name, font=("", 10, "bold")).pack(
+            side=tk.TOP, anchor="w", pady=(0, 6)
+        )
+
+        view = ws.pane_view(record)
+        # 本ツールでは対処できない（検出のみの）事項を先に、赤字で出す（要件定義書 第4章。
+        # 対処が必要な検出結果が、必ず先に目に入るように）。
+        # 赤字の注意と備考は、同じ内容が二度出ないように組み立てる（build_pane_warnings）。
+        if view.selection is None:
+            # C（要変換）・D（対象外）：何をすればよいかの案内。処理の項目はすべて操作不可。
+            labels = [describe_expected_processing(record), "このファイルは更新の対象になりません。"]
+            intro = None
+        else:
+            labels = [o.label for o in view.selection.options if not o.enabled]
+            intro = (
+                "以下は本ツールでは対処できません（検出のみ）。他のアプリで"
+                "対処のうえ、本ツールに再度読み込んで再検証してください。"
+            )
+        warnings, notes = build_pane_warnings(
+            record, labels, is_group=view.is_group, is_target=view.selection is not None
+        )
+        if warnings and intro:
+            self._wrap_label(intro, foreground=_UNFIXABLE_TEXT_COLOR).pack(
+                side=tk.TOP, anchor="w", pady=1
+            )
+        for warning in warnings:
+            bullet = "・" if intro else ""
+            self._wrap_label(bullet + warning.text, foreground=_UNFIXABLE_TEXT_COLOR).pack(
+                side=tk.TOP, anchor="w", pady=1
+            )
+            # 細目は、字下げを余白で付ける（空白で付けると、Tk がその空白で折り返し、
+            # 「－」だけが1行に残る）。
+            indent = theme.px(self, 14)
+            for detail in warning.details:
+                self._wrap_label(
+                    f"－{detail}", indent=indent, foreground=_UNFIXABLE_TEXT_COLOR
+                ).pack(side=tk.TOP, anchor="w", padx=(indent, 0))
+        if warnings:
+            ttk.Separator(frame, orient="horizontal").pack(side=tk.TOP, fill=tk.X, pady=(6, 6))
+
+        self._build_process_items(view)
+
+        if notes:
+            ttk.Separator(frame, orient="horizontal").pack(side=tk.TOP, fill=tk.X, pady=(10, 6))
+            self._wrap_label("備考", foreground=theme.NOTE).pack(side=tk.TOP, anchor="w")
+            for note in notes:
+                self._wrap_label(f"・{note}", foreground=theme.NOTE).pack(side=tk.TOP, anchor="w")
+
+        self._bind_wheel(frame)
+
+    def _checkbutton(self, text: str, var: tk.BooleanVar, enabled: bool = True) -> tk.Checkbutton:
+        # ttk.Checkbuttonはwraplengthオプションを持たないため、長い説明文を
+        # 折り返し表示できる標準tk.Checkbuttonを使う。
+        cb = tk.Checkbutton(
+            self._options_frame,
+            variable=var,
+            text=text,
+            wraplength=self._options_wraplength(),
+            justify="left",
+            anchor="w",
+            state=tk.NORMAL if enabled else tk.DISABLED,
+        )
+        if not enabled:
+            cb.configure(disabledforeground=theme.DISABLED_TEXT)
+        self._wrap_widgets.append(cb)
+        return cb
+
+    def _build_process_items(self, view: PaneView | None) -> None:
+        """処理の項目を、いつも同じ並び（PROCESS_ITEMS）ですべて表示する。
+
+        そのファイルに当てはまる項目は、内容を書いた操作できるチェックボックス
+        （適用するものにチェック）。当てはまらない項目・ファイルを選ぶ前・更新の
+        対象でないファイルは、名前だけの、チェックなし・操作不可のチェックボックス。
+        """
+        sel = view.selection if view is not None else None
+        available = {o.key: o for o in sel.options if o.enabled} if sel is not None else {}
+        for key, name in PROCESS_ITEMS:
+            if key == MERGE_KEY and view is not None and view.merge_option is not None:
+                var = tk.BooleanVar(value=view.merge_checked)
+                cb = self._checkbutton(view.merge_option.label, var)
+                cb.configure(command=lambda v=var: self._on_toggle_merge(v.get()))
+            elif key in available:
+                var = tk.BooleanVar(value=sel.choices.get(key, False))
+                cb = self._checkbutton(available[key].label, var)
+                cb.configure(command=lambda k=key, v=var: self._on_toggle_option(sel, k, v.get()))
+            else:
+                cb = self._checkbutton(name, tk.BooleanVar(value=False), enabled=False)
+            cb.pack(side=tk.TOP, anchor="w", pady=3, fill=tk.X)
+            if key in available and key == "rotate":
+                self._build_rotation_controls(sel)
+            # スタンプ済みのファイルは位置を変えられない（付け直すには、いったん外して
+            # 更新してから、もう一度付ける）ので、位置調整は出さない。
+            if key in available and key == "stamp" and not sel.stamped:
+                self._build_position_controls(sel)
+
+    def _on_toggle_option(self, sel: Selection, key: str, checked: bool) -> None:
+        sel.choices[key] = checked
+        self._after_choice_changed()
+
+    def _on_toggle_merge(self, checked: bool) -> None:
+        # 結合のON/OFFで、右ペインの項目（グループの項目⇔このファイルの項目）が入れ替わる。
+        self._workspace.set_merge(self._current, checked)
+        self._rebuild_options()
+        self._after_choice_changed()
+
+    def _after_choice_changed(self) -> None:
+        self._schedule_preview(0)
+
+    def _build_rotation_controls(self, sel: Selection) -> None:
+        """向き補正（4.6）の回転方向選択。内容の向きはツールには解析できない
+        ため、右90°／左90°をユーザーが選び、プレビューで結果を確認する。"""
+        frame = ttk.LabelFrame(self._options_frame, text="向き補正の回転方向")
+        frame.pack(side=tk.TOP, anchor="w", pady=(2, 6), padx=(22, 0), fill=tk.X)
+        row = ttk.Frame(frame)
+        row.pack(side=tk.TOP, anchor="w", padx=8, pady=(6, 8))
+        var = tk.IntVar(value=sel.rotate_degrees)
+
+        def _changed() -> None:
+            sel.rotate_degrees = var.get()
+            self._schedule_preview(0)
+
+        for text, value, tip in (
+            ("左に90°", 270, "ページを左（反時計回り）に90°回転します。"),
+            ("右に90°", 90, "ページを右（時計回り）に90°回転します。"),
+        ):
+            r = ttk.Radiobutton(row, text=text, variable=var, value=value, command=_changed)
+            r.pack(side=tk.LEFT, padx=(0, 12))
+            r.tooltip = Tooltip(
+                r, tip + "選ぶとプレビューがすぐ切り替わるので、読める向きになることを確かめてください。"
+            )
+        frame._var = var  # GC対策で参照を保持
+
+    def _stamp_margins(self, sel: Selection) -> tuple[float, float]:
+        cfg = self.config_obj.evidence_stamp
+        return sel.stamp_margin_mm or (cfg.margin_top_mm, cfg.margin_right_mm)
+
+    def _position_label_text(self, sel: Selection) -> str:
+        top, right = self._stamp_margins(sel)
+        return f"現在位置：上端から{top:.0f}mm、右端から{right:.0f}mm"
+
+    def _build_position_controls(self, sel: Selection) -> None:
+        """スタンプ位置調整UI（要件定義書4.7）。上下左右ボタンでこのファイル
+        （又は結合グループ）限りの余白を調整し、プレビューへ即座に反映する。"""
+        frame = ttk.LabelFrame(self._options_frame, text="スタンプ位置調整（右上からの余白）")
+        frame.pack(side=tk.TOP, anchor="w", pady=(2, 6), padx=(22, 0), fill=tk.X)
+        self._position_label = ttk.Label(frame, text=self._position_label_text(sel))
+        self._position_label.pack(side=tk.TOP, anchor="w", padx=8, pady=(6, 4))
+
+        def _adjust(dx: int = 0, dy: int = 0) -> None:
+            # dx=+1は右方向へ移動（右余白を減らす）、dy=+1は下方向へ移動（上余白を増やす）。
+            # ページ外（負の余白）にはみ出さないよう0mm未満にはしない。
+            top, right = self._stamp_margins(sel)
+            sel.stamp_margin_mm = (
+                max(0.0, top + dy * _POSITION_STEP_MM),
+                max(0.0, right - dx * _POSITION_STEP_MM),
+            )
+            self._position_label.configure(text=self._position_label_text(sel))
+            self._schedule_preview(0)
+
+        def _reset() -> None:
+            sel.stamp_margin_mm = None
+            self._position_label.configure(text=self._position_label_text(sel))
+            self._schedule_preview(0)
+
+        grid = ttk.Frame(frame)
+        grid.pack(side=tk.TOP, anchor="w", padx=8, pady=(0, 8))
+        scope = "動かした位置は、このファイルだけに使われます。"
+        for text, delta, row, column, tip in (
+            ("↑", dict(dy=-1), 0, 1, "スタンプを上へ動かします。"),
+            ("←", dict(dx=-1), 1, 0, "スタンプを左へ動かします。"),
+            ("→", dict(dx=1), 1, 2, "スタンプを右へ動かします。"),
+            ("↓", dict(dy=1), 2, 1, "スタンプを下へ動かします。"),
+        ):
+            b = ttk.Button(grid, text=text, width=3, command=lambda d=delta: _adjust(**d), takefocus=False)
+            b.grid(row=row, column=column)
+            b.tooltip = Tooltip(b, tip + scope)
+        b = ttk.Button(grid, text="リセット", command=_reset, takefocus=False)
+        b.grid(row=1, column=1, padx=4)
+        b.tooltip = Tooltip(b, "スタンプの位置を、設定ファイル（config.yaml）の既定の余白に戻します。")
+
+    # ------------------------------------------------------------------ プレビュー
+    def _update_page_nav(self) -> None:
+        has_pages = self._current is not None and self._page_count > 1
+        self._page_label.configure(
+            text=f"{self._page_index + 1} / {self._page_count} ページ" if has_pages else ""
+        )
+        if has_pages:
+            self._page_scroll.set(
+                self._page_index / self._page_count, (self._page_index + 1) / self._page_count
+            )
+        else:
+            self._page_scroll.set(0.0, 1.0)  # 送るページがない（つまみが全体を占める）
+
+    def _on_page_scroll(self, action: str, value: str, unit: str | None = None) -> None:
+        """スクロールバーの操作を、ページの移動にする。"""
+        if self._current is None or self._page_count <= 1:
+            return
+        if action == "moveto":
+            target = int(float(value) * self._page_count + 0.5)
+        else:  # "scroll"：矢印（units）もレールの押下（pages）も、1ページずつ送る
+            target = self._page_index + int(value)
+        self._go_to_page(target)
+
+    def _on_page_wheel(self, event: tk.Event) -> str:
+        self._change_page(platform_support.mousewheel_units(self, event.delta, -int(event.delta / 120)))
+        return "break"
+
+    def _go_to_page(self, index: int) -> None:
+        index = max(0, min(self._page_count - 1, index))
+        if index == self._page_index:
+            self._update_page_nav()
+            return
+        self._page_index = index
+        self._update_page_nav()
+        self._schedule_preview(0)
+
+    def _change_page(self, delta: int) -> None:
+        self._go_to_page(self._page_index + delta)
+
+    def _on_preview_resize(self, event: tk.Event) -> None:
+        size = (event.width, event.height)
+        if size == self._preview_size:
+            return
+        self._preview_size = size
+        if self._current is not None:
+            self._schedule_preview(200)
+
+    def _schedule_preview(self, delay_ms: int) -> None:
+        """プレビューを描き直す（続けて起きた変更は、最後の1回にまとめる）。"""
+        if self._preview_job is not None:
+            self.after_cancel(self._preview_job)
+        self._preview_job = self.after(delay_ms, self._refresh_preview)
+
+    def _show_preview_text(self, text: str) -> None:
+        self._preview_photo = None
+        self._preview_label.configure(image="", text=text)
+
+    def _refresh_preview(self) -> None:
+        self._preview_job = None
+        record, ws = self._current, self._workspace
+        if record is None or ws is None:
+            return
+        label, margins, rotate_degrees, rotate_on = ws.preview_state(record)
+        # 描くファイル：ふつうは record。スタンプ済みでチェックを外しているときは、
+        # スタンプのない姿（一時フォルダに作ったもの）。
+        shown = ws.preview_record(record)
+        # 更新のときの回転は、向き不一致のページだけに行う（output_writer）。
+        # プレビューも同じ条件のページだけを回して、見た目を一致させる。
+        rotation = 0
+        if rotate_on and record.pdf_finding is not None:
+            if (self._page_index + 1) in record.pdf_finding.orientation_mismatch_pages:
+                rotation = rotate_degrees
+        pad = theme.px(self, 12)
+        max_w = max(theme.px(self, 120), self._preview_label.winfo_width() - pad)
+        max_h = max(theme.px(self, 120), self._preview_label.winfo_height() - pad)
+        try:
+            if shown is None:
+                image = None
+            elif label is not None:
+                stamp_config: EvidenceStampConfig = self.config_obj.evidence_stamp
+                if margins is not None:
+                    stamp_config = dataclasses.replace(
+                        stamp_config, margin_top_mm=margins[0], margin_right_mm=margins[1]
+                    )
+                image = render_preview_with_stamp(
+                    shown, label, stamp_config, page_index=self._page_index,
+                    max_width=max_w, max_height=max_h, rotate_degrees=rotation,
+                )
+            else:
+                image = render_preview(
+                    shown, page_index=self._page_index,
+                    max_width=max_w, max_height=max_h, rotate_degrees=rotation,
+                )
+        except Exception as exc:  # noqa: BLE001 - プレビューの失敗で画面を止めない
+            self._errors.record(exc, "プレビュー")
+            image = None
+        if image is not None:
+            # 枠より小さい画像（画素数の少ないJPEG・PNG）は、枠いっぱいまで拡大する。
+            image = fit_preview(image, max_w, max_h)
+            # ページの端が分かるよう、細い枠を付ける（白い紙が地の色に溶けないように）。
+            image = ImageOps.expand(image.convert("RGB"), border=1, fill=theme.BORDER)
+            self._preview_photo = ImageTk.PhotoImage(image, master=self)
+            self._preview_label.configure(image=self._preview_photo, text="")
+        else:
+            self._show_preview_text(preview_placeholder_text(record))
+
+    # ------------------------------------------------------------------ ファイルを更新
+    def _start_update(self) -> None:
+        ws = self._workspace
+        if ws is None or self._scan_result is None:
+            messagebox.showerror(APP_TITLE, "先にフォルダを読み込んでください。")
+            return
+        root = ws.root
+        if not root.is_dir():
+            messagebox.showerror(APP_TITLE, f"読み込んだフォルダが見つかりません：{root}")
+            return
+
+        plan = ws.plan_update()
+        if not plan.has_work:
+            note = f"\n\n{unstamped_image_line(plan)}" if plan.unstamped_image_count else ""
+            messagebox.showinfo(APP_TITLE,
+                "更新する項目がありません。\n"
+                "右の「処理の項目」でチェックの入っている処理がなく、ファイルの仕分けも不要です。" + note,
+            )
+            return
+
+        # CLAUDE.md「絶対に譲れない設計原則」3：ファイルを変更する処理は、実行前に必ず
+        # ユーザーの確認を得る。処理の種類ごとの件数と、まだプレビューを表示して
+        # いないファイルの数を示す（2026-11-16 班長決定「案A」）。
+        if not messagebox.askokcancel(APP_TITLE,
+            describe_update_plan(plan, self.config_obj.upload.max_total_mb),
+            icon=messagebox.WARNING if (plan.unviewed_count or plan.oversized) else messagebox.QUESTION,
+            default=messagebox.CANCEL if plan.unviewed_count else messagebox.OK,
+        ):
+            return
+
+        self._update_button.state(["disabled"])
+        self._restore_button.state(["disabled"])
+        self._scan_button.config(state=tk.DISABLED)
+        self._status_label.config(text="更新中...")
         self.update_idletasks()
 
-        # 事前の上書き警告で承認済みの衝突名（バッチフォルダ相対）。レビューでの
-        # 選択変更により最終名がこれと異なる場合、書き出し直前に個別再確認する。
-        preconfirmed_conflicts = set(conflicts)
-
-        # 要件定義書4.5・4.7「ファイル別・逐次レビュー」：バッチ内の並び順の
-        # とおり、1件（又は1枝番ファイル結合グループ）ずつプレビュー付きの確認画面を
-        # 表示し、確定した内容を即座に書き出す。モーダルダイアログと1件ずつの
-        # 書き込みが交互に発生するため、バックグラウンドスレッドは使わず
-        # メインスレッドで同期的に処理する。すべての検出結果（本ツールで対処
-        # できないものを含む）はこのレビュー画面自体に表示されるため、書き出し
-        # 完了後にまとめて警告する画面は設けない（実行前に必ず目に入る一本化）。
-        # 1件の書き込み失敗（他プロセスによるロック・破損PDF等）で全体が
-        # 停止しUIが操作不能のまま残らないよう、書き込みは1件ごとに例外を
-        # 捕捉し、finallyでボタンの復帰を保証する。
-        actual_planned: list[PlannedCopy] = []
-        report_batches: dict[int, list[PlannedCopy]] = {}
-        skipped_descriptions: list[str] = []
-        seen_names: dict[str, int] = {}
-        total_items = sum(len(batch.items) for batch in batches)
-        processed = 0
+        # 1件の失敗（他のアプリが開いている・破損PDF等）で全体が止まり、画面が
+        # 操作不能のまま残らないよう、1件ごとに例外を捕捉し、finallyでボタンを戻す。
+        # 提出回ごとの、実際に置いたファイルの数（完了のお知らせに出す）。
+        batch_counts: dict[int, int] = {}
+        # 更新できなかったファイル（「名前（理由）」）。完了のお知らせに並べる
+        # （2026-11-16 班長決定。レポートは廃止した）。
+        skipped: list[str] = []
+        batch_index_of = {
+            id(item): batch.index for batch in plan.batches for item in batch.items
+        }
+        total = len(plan.updates)
+        changed = moved = 0
         aborted = False
-
         try:
-            for batch in batches:
-                batch_dir = resolve_batch_dir(batches, batch, output_dir)
-                for prelim_item in batch.items:
-                    processed += 1
-                    preview_record = (
-                        prelim_item.merge_group.representative.record
-                        if prelim_item.merge_group is not None
-                        else prelim_item.record
-                    )
-                    review_item = ReviewItem(
-                        preliminary=prelim_item, preview_record=preview_record, batch_dir=batch_dir
-                    )
-                    final_item, abort_all = review_and_confirm(
-                        self,
-                        review_item,
-                        processed,
-                        total_items,
-                        self.config_obj.filename,
-                        self.config_obj.evidence_stamp,
-                    )
-                    if abort_all:
-                        aborted = True
-                        break
-                    if final_item is None:
-                        # 「キャンセル」：この1件だけをスキップし、次の対象へ進む。
-                        # スキップ理由も併記する（上書き辞退・書き出しエラーの
-                        # スキップと完了メッセージ・レポート上で区別するため）。
-                        name = (
-                            prelim_item.output_filename
-                            if prelim_item.merge_group is None
-                            else "、".join(
-                                m.record.path.name for m in prelim_item.merge_group.members
-                            )
-                        )
-                        skipped_descriptions.append(f"{name}（レビューでキャンセル）")
-                        continue
-
-                    final_name = self._dedupe_output_filename(
-                        final_item.output_filename, seen_names, self.config_obj.filename
-                    )
-                    if final_name != final_item.output_filename:
-                        final_item = dataclasses.replace(
-                            final_item, output_filename=final_name, renamed_for_collision=True
-                        )
-
-                    # 上書きの再確認：事前警告は「全結合・全整形適用」仮定の
-                    # 名前で行っているため、レビューで整形・結合を辞退した
-                    # 場合の最終名は未確認のまま既存ファイルを上書きし得る。
-                    # 確定名が事前承認済みの衝突名と異なり、かつ出力先に既に
-                    # 存在する場合のみ、個別に確認する。
-                    rel_name = (
-                        f"{batch.folder_name}/{final_name}" if len(batches) > 1 else final_name
-                    )
-                    if rel_name not in preconfirmed_conflicts and (batch_dir / final_name).exists():
-                        if not messagebox.askyesno(
-                            "上書きの確認",
-                            f"出力先に同名のファイルが既にあります：\n{rel_name}\n\n"
-                            "上書きしますか？（「いいえ」でこの1件をスキップします）",
-                        ):
-                            skipped_descriptions.append(f"{final_name}（上書きを辞退）")
-                            continue
-
-                    self._status_label.config(
-                        text=f"書き出し中：{processed} / {total_items} 件目..."
-                    )
+            manifest = Manifest.load(root)
+            for i, update in enumerate(plan.updates, start=1):
+                item = update.item
+                name = (
+                    item.output_filename
+                    if item.merge_group is None
+                    else "、".join(p.name for p in update.source_paths)
+                )
+                if update.keys or update.moves or update.unstamp:
+                    self._status_label.config(text=f"更新中：{i} / {total} 件目...")
                     self.update_idletasks()
                     try:
-                        # サブフォルダ（提出用_NN）は実際に書き出す時点で作る
-                        # （全件キャンセルされたバッチの空フォルダを残さない）。
-                        batch_dir.mkdir(parents=True, exist_ok=True)
-                        copy_to_output([final_item], batch_dir, self.config_obj.evidence_stamp)
-                    except Exception as exc:  # noqa: BLE001 - 1件の失敗を全体停止にしない
-                        self._errors.record(exc, "書き出し")
-                        proceed = messagebox.askyesno(
-                            "書き出しエラー",
-                            f"「{final_name}」の書き出しに失敗しました：\n{exc}\n\n"
-                            "（出力先のファイルを他のアプリで開いている場合は閉じてから"
-                            "やり直してください）\n\n"
-                            "この1件をスキップして続行しますか？"
-                            "（「いいえ」で残りの書き出しを中止します）",
+                        if update.unstamp:
+                            # 証拠番号スタンプのチェックを外したファイル：スタンプを消す。
+                            remove_stamp(root, update.source_paths[0], manifest, self.config_obj)
+                        outcome = update_item(
+                            root, item, update.dest_dir, manifest,
+                            self.config_obj.evidence_stamp, self.config_obj.filename,
                         )
+                    except Exception as exc:  # noqa: BLE001 - 1件の失敗を全体停止にしない
+                        self._errors.record(exc, "更新")
+                        proceed = messagebox.askyesno(APP_TITLE,
+                            f"「{name}」の更新に失敗しました：\n{exc}\n\n"
+                            "（このファイルを他のアプリで開いている場合は、閉じてから"
+                            "やり直してください。このファイルは更新前のままです）\n\n"
+                            "この1件をとばして続けますか？"
+                            "（「いいえ」で残りの更新を中止します）",
+                        )
+                        skipped.append(describe_failure(name, exc))
                         if proceed:
-                            skipped_descriptions.append(f"{final_name}（書き出しエラー：{exc}）")
                             continue
                         aborted = True
                         break
-
-                    actual_planned.append(final_item)
-                    report_batches.setdefault(batch.index, []).append(final_item)
-                if aborted:
-                    break
-        except Exception as exc:  # noqa: BLE001 - 想定外の失敗でもUIを操作可能なまま残す
-            self._errors.record(exc, "書き出し")
-            messagebox.showerror(
-                "書き出し処理でエラーが発生しました",
-                f"想定外のエラーのため書き出しを中断しました：\n{exc}\n\n"
-                "ここまでに書き出し済みのファイルはそのまま残っています。",
+                    changed += 1 if outcome.changed or update.unstamp else 0
+                    moved += 1 if outcome.moved else 0
+                    updated_path = outcome.path
+                else:
+                    updated_path = update.source_paths[0]
+                # 証拠番号スタンプを付けないと決めたファイルかどうかを覚える（読み込み
+                # 直したときに、スタンプへ自動でチェックを付けないため）。
+                record_stamp_choice(root, updated_path, manifest, update.declines_stamp)
+                index = batch_index_of[id(item)]
+                batch_counts[index] = batch_counts.get(index, 0) + 1
+            save_choices(root, manifest)
+        except Exception as exc:  # noqa: BLE001 - 想定外の失敗でも画面を操作可能なまま残す
+            self._errors.record(exc, "更新")
+            messagebox.showerror(APP_TITLE,
+                f"想定外のエラーのため更新を中断しました：\n{exc}\n\n"
+                "ここまでに更新したファイルは更新後のまま、残りは更新前のままです。",
             )
             aborted = True
         finally:
-            self._write_button.config(state=tk.NORMAL)
+            self._scan_button.config(state=tk.NORMAL)
 
-        # 要件定義書4.8「基本レポート出力機能」：処理結果・警告一覧・バッチ構成・
-        # 未対応形式一覧を出力フォルダ直下にテキストで生成する。集計・整形の
-        # みの読み取り専用処理のため確認UIの対象外（自動生成）。中止された
-        # 場合も、実際に処理済みの範囲でレポートを生成する。
-        report_batches_list = [
-            Batch(index=idx, items=tuple(items)) for idx, items in sorted(report_batches.items())
-        ]
-        try:
-            report_text = build_report_text(
-                input_dir=self._input_dir,
-                output_dir=output_dir,
-                all_records=list(self._scan_result.records),
-                planned=actual_planned,
-                batches=report_batches_list,
-                evidence_number_config=self.config_obj.evidence_number,
-                skipped_items=skipped_descriptions,
-            )
-            report_path = write_report(report_text, output_dir)
-            report_note = f"処理内容の詳細は「{report_path.name}」をご確認ください。"
-        except Exception as exc:  # noqa: BLE001 - レポート保存失敗を完了通知の妨げにしない
-            self._errors.record(exc, "レポート保存")
-            report_note = f"（レポートの保存に失敗しました：{exc}）"
-
-        total_written = len(actual_planned)
-        total_skipped = len(skipped_descriptions)
-        batch_count = len(report_batches_list)
-
-        # スキップ（レビューでのキャンセル・上書き辞退・書き出しエラー）で、
-        # 書き出し前の事前チェック時にはなかった欠番が新たに生じた場合のみ、
-        # 追加で警告する（事前ポップアップは全件書き出し前提の判定のため、
-        # スキップ起因の欠番はレポートを開かない限り気づけないままになる）。
-        if total_skipped and actual_planned:
-            post_sequence_lines = format_evidence_sequence_warnings(
-                (item.output_filename for item in actual_planned),
-                self.config_obj.evidence_number,
-            )
-            new_sequence_lines = [l for l in post_sequence_lines if l not in sequence_lines]
-            if new_sequence_lines:
-                messagebox.showwarning(
-                    "スキップにより欠番が生じています",
-                    "スキップしたファイルの分、実際の書き出し結果に新たな欠番の"
-                    "疑いが生じています。\n\n" + "\n".join(new_sequence_lines[:20]),
-                )
-
-        # すべての検出結果（本ツールで対処できないものを含む）は、逐次レビュー
-        # 画面（1件ずつ必ず目に入る）にすべて表示済みのため、書き出し完了後に
-        # まとめて警告する画面は設けない。号証の連番・欠番チェックのみ、対象
-        # ファイル確定時点で書き出し開始前に一度表示済み（複数ファイルにまたがる
-        # 検出結果のため）。
-
-        if aborted:
-            self._status_label.config(
-                text=(
-                    f"書き出しを中止しました（{total_written} 件書き出し・"
-                    f"{total_skipped} 件スキップ／全 {total_items} 件）"
-                )
-            )
-            skip_note = f"（{total_skipped} 件はスキップ。内訳はレポート参照）" if total_skipped else ""
-            self._show_completion_dialog(
-                "書き出しを中止しました",
-                f"{total_written} 件を書き出した時点で中止しました{skip_note}。\n\n"
-                f"{report_note}",
-                output_dir=output_dir,
-                warning=True,
-            )
-            return
-
-        if total_written == 0:
-            # 全件キャンセル：「書き出し完了（0 件・0 回分）」という不自然な
-            # 完了表示を避け、何も書き出していないことを明示する。
-            self._status_label.config(text="書き出したファイルはありません（全件スキップ）")
-            self._show_completion_dialog(
-                "書き出したファイルはありません",
-                f"全 {total_items} 件をスキップしたため、ファイルは書き出していません。\n\n"
-                f"{report_note}",
-                output_dir=output_dir,
-                warning=True,
-            )
-            return
-
-        skip_line = (
-            f"\n（{total_skipped} 件はスキップして書き出しませんでした。内訳はレポート参照）"
-            if total_skipped
-            else ""
+        skip_block = format_skipped(skipped)
+        result_line = f"{changed} 件のファイルを更新しました。"
+        if moved:
+            result_line += f"（「提出用_NN」フォルダとの間で移したファイル：{moved} 件）"
+        backup_line = (
+            f"更新する前のファイルは「{BACKUP_DIRNAME}」フォルダにあります。"
+            "［元のファイルに戻す］で元に戻せます。"
         )
-        self._status_label.config(text=f"書き出し完了（{total_written} 件・{batch_count} 回分）")
-
-        if batch_count >= 2:
-            # 要件定義書4.5「通知の必須化」：分割が発生する場合、確認（実行可否
-            # の選択）は不要だが、処理完了時の通知は省略してはならない。
-            # フォルダ名は実際に書き出した回（report_batches_list）から取る
-            # （キャンセルで先頭バッチが空になった場合、「提出用_01から」という
-            # 固定文言は実態と食い違うため）。
-            batch_summary = "\n".join(
-                f"・{b.folder_name}：{len(b.items)} 件" for b in report_batches_list
-            )
-            first_folder = report_batches_list[0].folder_name
-            limit_mb = f"{self.config_obj.upload.max_total_mb:g}MB"
+        if aborted:
+            self._status_label.config(text=f"更新を中止しました（{changed} 件を更新）")
             self._show_completion_dialog(
-                "複数回に分けて提出する必要があります",
-                f"合計サイズが{limit_mb}を超えるため、{batch_count}回に分けて提出する"
-                f"必要があります。「{first_folder}」から順にご提出ください。"
-                f"\n\n{batch_summary}{skip_line}\n\n"
-                f"出力先：{self._output_dir}\n"
+                f"{changed} 件を更新した時点で中止しました。{skip_block}\n\n{backup_line}",
+                folder=root, warning=True,
+            )
+        elif len(plan.batches) >= 2:
+            # 要件定義書4.5「通知の必須化」：分割が発生する場合、処理完了時の通知は
+            # 省略してはならない。
+            batch_summary = "\n".join(
+                f"・提出用_{index:02d}：{count} 件" for index, count in sorted(batch_counts.items())
+            )
+            limit_mb = f"{self.config_obj.upload.max_total_mb:g}MB"
+            first_folder = f"提出用_{min(batch_counts):02d}" if batch_counts else "提出用_01"
+            self._status_label.config(text=f"更新完了（{changed} 件・{len(plan.batches)} 回分）")
+            self._show_completion_dialog(
+                f"{result_line}{skip_block}\n\n"
+                f"合計サイズが{limit_mb}を超えるため、{len(plan.batches)}回に分けて提出する"
+                f"必要があります。「{first_folder}」から順にご提出ください。\n\n{batch_summary}\n\n"
                 "各「提出用_NN」フォルダの中身を、提出回ごとに手作業でmintsに"
-                "アップロードしてください。\n\n"
-                f"{report_note}",
-                output_dir=output_dir,
-                warning=True,
+                f"アップロードしてください。\n\n{backup_line}",
+                folder=root, warning=True,
             )
         else:
-            # 元の計画が複数バッチだった場合、書き出し先は出力フォルダ直下では
-            # なく「提出用_NN」サブフォルダの中（resolve_batch_dirは元の計画
-            # バッチ数で判定する）。出力先直下を見てファイルがないと誤認され
-            # ないよう、その旨を明記する。
-            subfolder_note = ""
-            if len(batches) >= 2 and report_batches_list:
-                subfolder_note = (
-                    f"\nファイルは「{report_batches_list[0].folder_name}」フォルダ内に"
-                    "書き出されています。"
-                )
+            self._status_label.config(text=f"更新完了（{changed} 件）")
             self._show_completion_dialog(
-                "書き出し完了",
-                f"{total_written} 件のファイルを書き出しました。{skip_line}\n"
-                f"出力先：{self._output_dir}{subfolder_note}\n\n"
-                f"{report_note}",
-                output_dir=output_dir,
+                f"{result_line}{skip_block}\n\n{backup_line}",
+                folder=root, warning=bool(skipped),
             )
 
-    def _show_completion_dialog(
-        self, title: str, message: str, *, output_dir: Path, warning: bool = False
-    ) -> None:
-        """書き出し完了・中止時の通知ダイアログ。
+        # 読み込み直す。済んだ処理は検出されなくなる（スタンプは更新記録で分かる）ので、
+        # 済んだ項目のチェックは外れる。
+        self._rescan()
 
-        「OK」に加えて「フォルダを開く」ボタンを併置し、別ダイアログで
-        「出力フォルダを開きますか？」と聞き直す手間（従来方式）を省く。
-        「フォルダを開く」を選ぶと、閉じると同時に出力フォルダを
-        エクスプローラーで開く。フォルダを開く操作自体はファイルを変更しない
-        ためCLAUDE.mdの確認UI原則（設計原則3）の対象外だが、ユーザーの意図
-        しない画面遷移を避けるため、無条件には開かず選択式とする。
+    def _rescan(self) -> None:
+        if self._scan_result is None:
+            return
+        if self._current is not None:
+            self._reselect_name = display_name(self._current, self._scan_result.root)
+        self._scan(self._scan_result.root, self._scan_result.include_subfolders)
+
+    # ------------------------------------------------------------------ 元のファイルに戻す
+    def _start_restore(self) -> None:
+        ws = self._workspace
+        if ws is None:
+            return
+        root = ws.root
+        if not has_restorable_update(root):
+            messagebox.showinfo(APP_TITLE, "このフォルダには、元に戻せる更新がありません。")
+            self._restore_button.state(["disabled"])
+            return
+        count = len(Manifest.load(root).entries)
+        if not messagebox.askokcancel(APP_TITLE,
+            f"このツールで更新した {count} 件のファイルを、「{BACKUP_DIRNAME}」フォルダに残した"
+            "更新前のファイルに戻します。\n\n"
+            "・名前を変えたファイル、結合したファイル、「提出用_NN」フォルダへ移したファイルも、"
+            "元の名前・元の位置に戻ります。\n"
+            "・更新の後に、他のアプリでこれらのファイルを直していた場合、その内容は失われます。\n"
+            f"・すべて戻すと、「{BACKUP_DIRNAME}」フォルダはなくなります。\n\n"
+            "元に戻しますか？",
+            icon=messagebox.WARNING,
+            default=messagebox.CANCEL,
+        ):
+            return
+        self._status_label.config(text="更新前に戻しています...")
+        self.update_idletasks()
+        try:
+            result = restore_all(root)
+        except Exception as exc:  # noqa: BLE001 - 失敗しても画面を操作可能なまま残す
+            self._errors.record(exc, "元のファイルに戻す")
+            messagebox.showerror(APP_TITLE,
+                f"元に戻す処理でエラーが発生しました：\n{exc}\n\n"
+                f"更新前のファイルは「{BACKUP_DIRNAME}」フォルダに残っています。",
+            )
+            self._rescan()
+            return
+        if result.failures:
+            shown = "\n".join(f"・{f}" for f in result.failures[:15])
+            if len(result.failures) > 15:
+                shown += f"\n...ほか{len(result.failures) - 15}件"
+            messagebox.showwarning(APP_TITLE,
+                f"{result.restored} 件を元に戻しましたが、次のファイルは戻せませんでした。\n\n{shown}\n\n"
+                f"戻せなかったファイルの更新前のものは、「{BACKUP_DIRNAME}」フォルダに残っています。",
+            )
+        else:
+            messagebox.showinfo(APP_TITLE, f"{result.restored} 件のファイルを、更新前に戻しました。")
+        self._rescan()
+
+    # ------------------------------------------------------------------ 完了のお知らせ
+    def _show_completion_dialog(
+        self, message: str, *, folder: Path, warning: bool = False
+    ) -> None:
+        """更新の完了・中止のお知らせ。
+
+        「OK」に加えて「フォルダを開く」ボタンを併置する。フォルダを開く操作自体は
+        ファイルを変更しないためCLAUDE.mdの確認UI原則（設計原則3）の対象外だが、
+        ユーザーの意図しない画面遷移を避けるため、無条件には開かず選択式とする。
         """
         dialog = tk.Toplevel(self)
-        dialog.title(title)
+        dialog.title(APP_TITLE)
         dialog.transient(self)
         dialog.resizable(False, False)
 
@@ -1003,9 +1353,11 @@ class MainWindow(tk.Tk):
         )
         open_button.pack(side=tk.RIGHT, padx=(6, 0))
         open_button.tooltip = Tooltip(
-            open_button, "このお知らせを閉じて、出力フォルダをエクスプローラーで開きます。", above=True
+            open_button, "このお知らせを閉じて、更新したフォルダをエクスプローラーで開きます。", above=True
         )
-        ok_button = ttk.Button(button_frame, text="OK", command=lambda: _close(False))
+        ok_button = ttk.Button(
+            button_frame, text="OK", command=lambda: _close(False), style="Accent.TButton"
+        )
         ok_button.pack(side=tk.RIGHT)
         ok_button.tooltip = Tooltip(
             ok_button, "このお知らせを閉じます（フォルダは開きません）。", above=True
@@ -1018,33 +1370,7 @@ class MainWindow(tk.Tk):
         self.wait_window(dialog)
 
         if open_folder.get():
-            platform_support.open_folder(output_dir)
-
-    @staticmethod
-    def _dedupe_output_filename(
-        name: str, seen: dict[str, int], filename_config: FilenameConfig | None = None
-    ) -> str:
-        """出力ファイル名の重複を防ぐ。
-
-        逐次レビューでのチェックボックス選択により、事前計画時に想定していた
-        名前と実際の最終ファイル名が変わり得るため（例：ファイル名整形の
-        チェックを外し、元の〔重複し得る〕名前に戻す等）、書き出しのたびに
-        実際の最終ファイル名を基準に重複チェックする
-        （output_writer.make_deduped_nameと同じ命名規則。casefoldキーにより
-        Windows〔大文字小文字非区別〕での実質衝突も検出し、filename_configが
-        あれば連番付与後も100文字上限に収まるよう幹を再切り詰めする）。
-        """
-        key = name.casefold()
-        if key not in seen:
-            seen[key] = 1
-            return name
-        seen[key] += 1
-        candidate = make_deduped_name(name, seen[key], filename_config)
-        while candidate.casefold() in seen:
-            seen[key] += 1
-            candidate = make_deduped_name(name, seen[key], filename_config)
-        seen[candidate.casefold()] = 1
-        return candidate
+            platform_support.open_folder(folder)
 
 
 def main() -> None:
@@ -1060,8 +1386,7 @@ def main() -> None:
         # config.yamlを編集する運用〔CLAUDE.md〕を前提とした導線）。
         root = tk.Tk()
         root.withdraw()
-        messagebox.showerror(
-            "起動エラー",
+        messagebox.showerror(APP_TITLE,
             "起動に失敗しました。設定ファイル（config.yaml）の内容に問題がある"
             f"可能性があります。\n\n{exc}",
         )

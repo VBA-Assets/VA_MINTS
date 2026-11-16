@@ -185,6 +185,9 @@ def test_render_preview_with_stamp_can_show_pages_other_than_first(tmp_path: Pat
     assert isinstance(page1, Image.Image)
     assert isinstance(page2, Image.Image)
     assert page1.tobytes() != page2.tobytes()
+    # スタンプは1ページ目にだけ押すので、2ページ目はスタンプのない見た目と同じ。
+    assert page1.tobytes() != render_preview(record, page_index=0).tobytes()
+    assert page2.tobytes() == render_preview(record, page_index=1).tobytes()
 
 
 def test_render_preview_with_stamp_returns_none_for_out_of_range_page(tmp_path: Path):
@@ -193,3 +196,20 @@ def test_render_preview_with_stamp_returns_none_for_out_of_range_page(tmp_path: 
     image = render_preview_with_stamp(_record(path, "PDF"), "甲018", _STAMP_CONFIG, page_index=5)
 
     assert image is None
+
+
+def test_fit_preview_enlarges_small_image_keeping_aspect_ratio():
+    """画素数の少ない画像は、プレビューの枠いっぱいまで拡大する（縦横比は保つ）。"""
+    from PIL import Image
+
+    from mints_prep.ui.preview import fit_preview
+
+    small = Image.new("RGB", (100, 50), "white")
+    fitted = fit_preview(small, 600, 800)
+    assert fitted.size == (600, 300)
+
+    large = Image.new("RGB", (2000, 4000), "white")
+    assert fit_preview(large, 600, 800).size == (400, 800)
+
+    exact = Image.new("RGB", (600, 300), "white")
+    assert fit_preview(exact, 600, 800) is exact

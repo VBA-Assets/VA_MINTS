@@ -1,7 +1,8 @@
 """証拠番号の右上スタンプ焼き込み（要件定義書 4.7）。
 
 準備の手引29頁「証拠番号は...証拠データの右上にも記載」に基づき、証拠番号
-（例：「甲001」「甲001-1」）をPDFの各ページ又は画像の右上に焼き込む。
+（例：「甲001」「甲001-1」）をPDFの1ページ目又は画像の右上に焼き込む（2026-11-16 班長指示：
+2ページ目以降には押さない。それまでは全ページに押していた）。
 
 文字サイズ・余白は一次資料に数値定めがないため config.yaml（evidence_stamp）で
 管理する（第7章「公式規定のない事項の扱い」）。
@@ -106,7 +107,9 @@ def stamp_pdf_page(page, label: str, config: EvidenceStampConfig) -> None:
 
 
 def stamp_pdf(input_path: Path, output_path: Path, label: str, config: EvidenceStampConfig) -> None:
-    """PDFの全ページ右上に証拠番号ラベルを焼き込み、output_pathへ書き出す。
+    """PDFの1ページ目の右上に証拠番号ラベルを焼き込み、output_pathへ書き出す。
+
+    2ページ目以降には押さない（2026-11-16 班長指示）。
 
     ページに回転属性（/Rotate 90/270等）がある場合、MediaBox座標系のままの
     オーバーレイ合成では「閲覧時の右上」ではない隅に90度回転したスタンプが
@@ -115,7 +118,8 @@ def stamp_pdf(input_path: Path, output_path: Path, label: str, config: EvidenceS
     不変のまま/Rotateを0に正規化）してからスタンプする。
     """
     writer = PdfWriter(clone_from=str(input_path))
-    for page in writer.pages:
+    if writer.pages:
+        page = writer.pages[0]
         if (page.rotation or 0) % 360 != 0:
             page.transfer_rotation_to_content()
         stamp_pdf_page(page, label, config)

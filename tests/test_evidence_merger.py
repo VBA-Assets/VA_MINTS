@@ -229,3 +229,23 @@ def test_duplicate_branch_numbers_excluded_from_merge(tmp_path):
     ]
     groups = find_branch_merge_groups(records, _EVIDENCE_CONFIG)
     assert groups == []
+
+
+def test_merge_stamps_only_first_page_of_each_member(tmp_path: Path):
+    """結合するときも、各ファイルの1ページ目にだけ、その枝番を押す（2026-11-16 班長指示）。"""
+    from fixtures.generate_fixtures import make_multipage_pdf
+
+    records = [
+        _record(make_multipage_pdf(tmp_path / "甲001-1 a.pdf", page_count=3)),
+        _record(make_multipage_pdf(tmp_path / "甲001-2 b.pdf", page_count=2)),
+    ]
+    group = find_branch_merge_groups(records, _EVIDENCE_CONFIG)[0]
+    dest = tmp_path / group.output_filename
+
+    merge_branch_group(group, dest, stamp=True, stamp_config=_STAMP_CONFIG)
+
+    texts = [page.extract_text() for page in PdfReader(str(dest)).pages]
+    assert len(texts) == 5
+    assert "甲001-1" in texts[0] and "甲001-2" in texts[3]
+    for i in (1, 2, 4):
+        assert "甲001" not in texts[i]

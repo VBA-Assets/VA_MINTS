@@ -2,7 +2,7 @@
 
 証拠番号スタンプを付けるかどうかの判断には、原本に既に証拠番号が記載されて
 いないか（重複スタンプになっていないか）を目視で確認できる必要がある。
-そのため、逐次レビュー画面（ui/write_review_dialog.py）は各対象ファイルの
+そのため、メイン画面（ui/app.py）の中央のペインは、左のペインで選んだファイルの
 プレビューを表示する。証拠番号スタンプのチェックボックスがON/OFFされた際は、
 実際にそのラベルを焼き込んだ場合の見た目（render_preview_with_stamp）と、
 未適用時の見た目（render_preview）とを切り替えて表示する。
@@ -28,6 +28,24 @@ from mints_prep.models import FileRecord
 from mints_prep.processors.evidence_stamp import stamp_image, stamp_pdf
 
 _IMAGE_FORMATS = {"JPEG", "PNG"}
+
+
+def fit_preview(image: Image.Image, max_width: int, max_height: int) -> Image.Image:
+    """プレビュー画像を、縦横比を保ったまま、枠（max_width×max_height）いっぱいの
+    大きさにする。枠より小さい画像は拡大する。
+
+    render_preview／render_preview_with_stamp は縮小しかしない（thumbnail）ため、
+    画素数の少ない画像（JPEG・PNG）は、広いプレビューの枠の中で小さいまま表示
+    されていた（2026-11-16 班長指摘「jpgやpngのプレビューが小さい」）。画面に出す
+    大きさを変えるだけで、ファイルそのものには触れない。
+    """
+    if image.width <= 0 or image.height <= 0 or max_width <= 0 or max_height <= 0:
+        return image
+    scale = min(max_width / image.width, max_height / image.height)
+    size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    if size == image.size:
+        return image
+    return image.resize(size, Image.LANCZOS)
 
 
 def get_page_count(record: FileRecord) -> int:
@@ -106,13 +124,16 @@ def render_preview_with_stamp(
     render_preview と同じくプレビュー不可の場合はNoneを返す。実際のスタンプ
     処理（evidence_stamp.stamp_pdf/stamp_image）をそのまま一時ファイルへ適用
     してからラスタライズするため、見た目は書き出し結果と一致する（別実装を
-    保守する必要がない）。証拠番号スタンプは書き出し時に全ページへ同じ
-    ラベルが焼き込まれる（evidence_stamp.stamp_pdf参照）ため、page_indexで
-    指定した1ページのみを抽出してスタンプすれば書き出し結果と一致する見た目
-    が得られる（全ページスタンプする無駄な処理を避ける）。元ファイルは変更しない。
+    保守する必要がない）。証拠番号スタンプは1ページ目にだけ焼き込まれる
+    （evidence_stamp.stamp_pdf参照。2026-11-16 班長指示）ため、1ページ目は、
+    そのページだけを抜き出してスタンプすれば更新の結果と一致する見た目が
+    得られ、2ページ目以降は、スタンプのない見た目（render_preview）になる。
+    元ファイルは変更しない。
     """
     if record.pdf_finding is not None and record.pdf_finding.has_password:
         return None
+    if record.detected_format == "PDF" and page_index != 0:
+        return render_preview(record, page_index, max_width, max_height, rotate_degrees)
 
     try:
         with tempfile.TemporaryDirectory() as tmp:

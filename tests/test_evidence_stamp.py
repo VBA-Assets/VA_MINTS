@@ -45,8 +45,10 @@ def test_stamp_pdf_preserves_multi_page_documents(tmp_path: Path):
 
     stamped = PdfReader(str(dest))
     assert len(stamped.pages) == 3
-    for page in stamped.pages:
-        assert "乙A001" in page.extract_text()
+    # 1ページ目にだけ押す（2026-11-16 班長指示）。
+    assert "乙A001" in stamped.pages[0].extract_text()
+    for page in stamped.pages[1:]:
+        assert "乙A001" not in page.extract_text()
 
 
 def test_stamp_image_preserves_dimensions_and_format(tmp_path: Path):

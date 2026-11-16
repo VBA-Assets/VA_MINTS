@@ -1,4 +1,7 @@
-"""逐次書き出しレビュー画面（ui/write_review_dialog.py）の判定ロジック。
+"""右ペインの処理の項目（ui/app.py・ui/workspace.py）の判定ロジック。
+
+Ver170 までの逐次書き出しレビュー画面（ui/write_review_dialog.py。Ver200 で廃止）の
+ために作ったもので、名前（ReviewItem・ReviewOption）はそのままにしている。
 
 画面の見た目（Tkinter）から切り離した純粋関数として実装し、単体テストで
 検証できるようにする（プロジェクトの既存方針：例えば app.py の
@@ -53,8 +56,18 @@ def _unfixable_detection_labels(record: FileRecord) -> list[str]:
     return collect_critical_warnings([record]) + collect_check_warnings([record])
 
 
-def build_review_options(item: ReviewItem, filename_config: FilenameConfig) -> list[ReviewOption]:
+def build_review_options(
+    item: ReviewItem,
+    filename_config: FilenameConfig,
+    applied: frozenset[str] = frozenset(),
+) -> list[ReviewOption]:
     """このアイテムに提示すべきチェックボックスと、その既定値を決定する。
+
+    applied：これまでの更新で、このファイルに済ませた処理（更新記録。
+    processors/updater.py）。証拠番号スタンプを付けたファイルは、読み込み直した
+    ときも、スタンプにチェックの入った状態にする（2026-11-16 班長指示。チェックは
+    「スタンプが付いている」ことを表し、外して更新するとスタンプを消す。付いて
+    いるファイルにもう一度付けることはしない。ui/workspace.py）。
 
     該当する処理がなければ空リストを返す（画面側は「検出された問題は
     ありません」を表示する）。
@@ -157,8 +170,8 @@ def build_review_options(item: ReviewItem, filename_config: FilenameConfig) -> l
             ReviewOption(
                 key="stamp",
                 label=(
-                    "証拠番号スタンプ：結合後の各ページに、元ファイルごとの"
-                    f"枝番ラベルを焼き込み（{low}〜{high}）"
+                    "証拠番号スタンプ：結合する各ファイルの1ページ目の右上に、"
+                    f"それぞれの枝番を焼き込み（{low}〜{high}）"
                 ),
                 default_checked=True,
             )
@@ -167,12 +180,15 @@ def build_review_options(item: ReviewItem, filename_config: FilenameConfig) -> l
         actionable_options.append(
             ReviewOption(
                 key="stamp",
-                label=f"証拠番号スタンプ：右上に「{prelim.stamp_label}」を焼き込み",
+                label=f"証拠番号スタンプ：1ページ目の右上に「{prelim.stamp_label}」を焼き込み",
                 # PDF以外（JPEG/PNG）は既定でOFFとする。写真等の画像は、
                 # PDFの証拠（契約書等）と異なり原本の見た目そのものが証拠内容と
                 # 直結する場合があり、スタンプの要否をより慎重に個別判断させる
                 # ため、自動推奨（既定チェック）の対象からは外す。
-                default_checked=prelim.record.detected_format == "PDF",
+                # 付けたファイルは、読み込み直してもON。利用者が付けないと決めたファイル
+                # （stamp_declined。更新記録）は、PDFでもONに戻さない。
+                default_checked="stamp" in applied
+                or (prelim.record.detected_format == "PDF" and "stamp_declined" not in applied),
             )
         )
 
@@ -236,3 +252,66 @@ def apply_review_choices(
         filename_sanitized=sanitize_on,
         rotate_degrees=rotate_degrees if rotate_on else None,
     )
+
+
+@dataclass(frozen=True)
+class PaneWarning:
+    """右ペインの赤字の注意1つ分（見出しの文と、その下に並べる細目）。"""
+
+    text: str
+    details: tuple[str, ...] = ()
+
+
+def build_pane_warnings(
+    record: FileRecord, info_labels: list[str], is_group: bool = False, is_target: bool = True
+) -> tuple[list[PaneWarning], list[str]]:
+    """右ペインに出す、赤字の注意と備考を、同じ内容が二度出ないように組み立てる。
+
+    赤字の注意（検出のみの事項。info_labels）と備考（record.notes）は、別々の所で
+    作っているので、そのまま並べると同じことを二度書く（2026-11-16 班長指摘「右ペイン
+    の赤字の注意と備考欄の内容が重複」）。次のように整理する。
+
+    - 個人情報・墨消しの残存：備考にあるのは、赤字の注意の細目（どの種類が何ページ目か、
+      残っている文字の例）。赤字の見出しは種類・ページを書かない短い文にし、細目を
+      その下に並べる。備考からは外す。
+    - 単体の上限超過・未対応形式・拡張子の不一致：備考は赤字の言い換えなので、外す。
+    - 備考に残すのは、赤字にないことだけ（検出できなかった・とばした検査、ファイル名の
+      JIS X 0213 外の文字など）。
+
+    is_group：枝番ファイル結合のグループの項目を出しているとき。赤字の注意は結合する
+    各ファイルの分（ファイル名つき）なので、細目への組み替えはせず、言い換えの備考を
+    外すだけにする。
+
+    is_target：更新の対象（分類A・B）か。対象でないファイル（要変換・対象外）は、
+    「メタデータ検出に対応していない」のような検査の備考に意味がないので外す。
+
+    戻り値は（赤字の注意、備考に残す文）。
+    """
+    pii_details = tuple(record.pii_finding.details) if record.pii_finding is not None else ()
+    redaction_details = (
+        tuple(record.redaction_finding.details) if record.redaction_finding is not None else ()
+    )
+    warnings: list[PaneWarning] = []
+    moved: set[str] = set()
+    for label in info_labels:
+        if not is_group and "個人情報の可能性がある記載を検出しました" in label and pii_details:
+            warnings.append(
+                PaneWarning(
+                    "個人情報の可能性がある記載を検出しました。意図した記載か確認してください",
+                    pii_details,
+                )
+            )
+            moved.update(pii_details)
+        elif not is_group and "墨消し・マーカーの下に文字情報が残存している疑い" in label and redaction_details:
+            warnings.append(
+                PaneWarning("墨消し・マーカーの下に文字情報が残存している疑いがあります（要確認）", redaction_details)
+            )
+            moved.update(redaction_details)
+        else:
+            warnings.append(PaneWarning(label))
+
+    restated = ("単体ファイルが", "未対応形式のため処理対象外です", "拡張子と実体（")
+    notes = [n for n in record.notes if n not in moved and not n.startswith(restated)]
+    if not is_target:
+        notes = [n for n in notes if n != "この形式のメタデータ検出には対応していません"]
+    return warnings, notes

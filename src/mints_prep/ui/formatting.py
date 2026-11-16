@@ -108,7 +108,7 @@ def describe_expected_processing(
     # 区別できるよう「書き出し時に本ツールで処理できます」と注記する
     # （分類は現状の状態把握としてBのまま変えない。処理して出力された
     # ファイルを再読み込みすればAになる）。
-    tool_note = "。書き出し時に本ツールで処理できます" if include_tool_note else ""
+    tool_note = "。本ツールで処理できます" if include_tool_note else ""
     ff = record.filename_finding
     if ff.exceeds_max_length:
         limit_text = f"上限{ff.max_length}文字" if ff.max_length is not None else "上限文字数"
