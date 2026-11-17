@@ -73,9 +73,8 @@ def describe_expected_processing(
     # 単体ファイル200MB超過・墨消し完全性の検証結果は、いずれも提出前に必ず
     # 対処すべき最も重要度の高い警告として先頭に表示する（要件定義書4.5節・
     # 4.8のレポート出力仕様に準じる）。単体200MB超過は合計サイズの分割
-    # （200MB分割）では解決できず、圧縮又は分割（実行機能はチェック専念方針
-    # により廃止）なしには原理的に
-    # 提出不可能なため、最優先で示す。
+    # （200MB分割）では解決できず、圧縮又はファイルの分割（Ver300。要件定義書
+    # 4.10・4.13）なしには原理的に提出不可能なため、最優先で示す。
     if record.exceeds_single_file_limit:
         limit_text = (
             f"{record.single_file_limit_mb:g}MB"
@@ -148,7 +147,11 @@ def describe_expected_processing(
             parts.append(f"向きが基本形と不一致の疑い（{pages}ページ目{tool_note}）")
 
     if record.metadata_finding is not None and record.metadata_finding.has_metadata:
-        parts.append(f"メタデータあり（除去を推奨{tool_note}）")
+        if record.detected_format == "MP4":
+            # MP4 のタグは、見つけるだけで取り除かない（metadata_remover.can_strip_metadata）
+            parts.append("メタデータあり（本ツールでは取り除けません。必要ならほかのアプリで取り除いてください）")
+        else:
+            parts.append(f"メタデータあり（除去を推奨{tool_note}）")
 
     evidence_note = None
     if evidence_match is not None:

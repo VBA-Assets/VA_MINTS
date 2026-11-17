@@ -13,14 +13,11 @@ from mints_prep.processors.updater import (
     MANIFEST_FILENAME,
     Manifest,
     has_restorable_update,
-    record_stamp_choice,
-    remove_stamp,
     restore_all,
-    save_choices,
     update_item,
 )
 from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import Workspace
+from mints_prep.ui.workspace import apply_all_updates, Workspace
 
 
 def _workspace(root: Path, config) -> Workspace:
@@ -28,18 +25,8 @@ def _workspace(root: Path, config) -> Workspace:
 
 
 def _apply(root: Path, ws: Workspace, config) -> None:
-    """画面の［ファイルを更新］と同じ順に実行する（ui/app.py の _start_update）。"""
-    manifest = Manifest.load(root)
-    for u in ws.plan_update().updates:
-        path = u.source_paths[0]
-        if u.unstamp:
-            remove_stamp(root, path, manifest, config)
-        if u.keys or u.moves or u.unstamp:
-            path = update_item(
-                root, u.item, u.dest_dir, manifest, config.evidence_stamp, config.filename
-            ).path
-        record_stamp_choice(root, path, manifest, u.declines_stamp)
-    save_choices(root, manifest)
+    """画面の［ファイルを更新］と同じ手順で、計画のすべてを行う。"""
+    apply_all_updates(root, ws.plan_update(), config)
 
 
 def _text(path: Path) -> str:
@@ -191,9 +178,8 @@ def test_split_moves_files_into_batch_folders_and_restore_moves_them_back(tmp_pa
 def test_scan_never_reads_backup_folder(tmp_path: Path, config):
     make_a4_pdf(tmp_path / "甲001 契約書.pdf", with_metadata=True)
     _run_update(tmp_path, config)
-    for include_subfolders in (False, True):
-        result = scan_folder(tmp_path, config, include_subfolders=include_subfolders)
-        assert [r.path.name for r in result.records] == ["甲001 契約書.pdf"]
+    result = scan_folder(tmp_path, config)
+    assert [r.path.name for r in result.records] == ["甲001 契約書.pdf"]
 
 
 def test_restore_does_not_overwrite_a_file_the_user_put_back(tmp_path: Path, config):
@@ -222,7 +208,20 @@ def test_failed_processing_leaves_the_file_untouched(tmp_path: Path, config):
 
     assert src.read_bytes() == b"broken after scan"
     assert not manifest.entries
-    assert not (tmp_path / BACKUP_DIRNAME / "作業中").exists()
+    assert not (tmp_path / BACKUP_DIRNAME / "更新中").exists()
+
+
+def test_old_work_folder_left_by_an_earlier_version_is_cleared(tmp_path: Path, config):
+    """更新の途中のフォルダは「更新中」（2026-11-17 に「作業中」から改めた）。前の名前の残りも消す。"""
+    make_a4_pdf(tmp_path / "甲001 契約書.pdf", with_metadata=True)
+    old = tmp_path / BACKUP_DIRNAME / "作業中"
+    old.mkdir(parents=True)
+    (old / "途中.pdf").write_bytes(b"left over")
+    ws = _workspace(tmp_path, config)
+    u = ws.plan_update().updates[0]
+    update_item(tmp_path, u.item, u.dest_dir, Manifest.load(tmp_path), config.evidence_stamp, config.filename)
+    assert not old.exists()
+    assert not (tmp_path / BACKUP_DIRNAME / "更新中").exists()
 
 
 def test_corrupt_manifest_raises_value_error(tmp_path: Path):
@@ -241,12 +240,12 @@ def test_stamp_stays_checked_after_update_and_other_finished_items_are_unchecked
 
     before = _workspace(tmp_path, config)
     sel = before.pane_view(before.eligible[0]).selection
-    assert sel.choices == {"strip_metadata": True, "stamp": True} and not sel.stamped
+    assert sel.choices == {"strip_metadata": True, "stamp": True, **{"compress": False, "reduce": False}} and not sel.stamped
 
     _apply(tmp_path, before, config)
     after = _workspace(tmp_path, config)
     sel = after.pane_view(after.eligible[0]).selection
-    assert sel.choices == {"stamp": True} and sel.stamped
+    assert sel.choices == {"stamp": True, **{"compress": False, "reduce": False}} and sel.stamped
     assert "実行済み" not in next(o.label for o in sel.options if o.key == "stamp")
     # チェックが入ったままなら、何もしない（もう一度は付けない）。
     assert not after.plan_update().has_work
@@ -255,7 +254,7 @@ def test_stamp_stays_checked_after_update_and_other_finished_items_are_unchecked
     restore_all(tmp_path)
     restored = _workspace(tmp_path, config)
     sel = restored.pane_view(restored.eligible[0]).selection
-    assert sel.choices == {"strip_metadata": True, "stamp": True} and not sel.stamped
+    assert sel.choices == {"strip_metadata": True, "stamp": True, **{"compress": False, "reduce": False}} and not sel.stamped
 
 
 def test_unchecking_stamp_removes_it_and_keeps_other_processing(tmp_path: Path, config):
@@ -281,7 +280,7 @@ def test_unchecking_stamp_removes_it_and_keeps_other_processing(tmp_path: Path, 
     assert "甲001" not in _text(src)
     after = _workspace(tmp_path, config)
     sel = after.pane_view(after.eligible[0]).selection
-    assert sel.choices == {"stamp": False} and not sel.stamped  # メタデータは除去済みのまま
+    assert sel.choices == {"stamp": False, **{"compress": False, "reduce": False}} and not sel.stamped  # メタデータは除去済みのまま
     assert (tmp_path / BACKUP_DIRNAME / "甲001 契約書.pdf").read_bytes() == original_bytes
     restore_all(tmp_path)
     assert src.read_bytes() == original_bytes
@@ -295,12 +294,12 @@ def test_unchecking_stamp_on_stamp_only_file_returns_the_original(tmp_path: Path
     src = make_a4_pdf_no_metadata(tmp_path / "甲001 契約書.pdf")
     original_bytes = src.read_bytes()
     ws = _workspace(tmp_path, config)
-    assert ws.pane_view(ws.eligible[0]).selection.choices == {"stamp": True}
+    assert ws.pane_view(ws.eligible[0]).selection.choices == {"stamp": True, **{"compress": False, "reduce": False}}
     _apply(tmp_path, ws, config)
     assert src.read_bytes() != original_bytes
 
     ws = _workspace(tmp_path, config)
-    assert ws.pane_view(ws.eligible[0]).selection.choices == {"stamp": True}
+    assert ws.pane_view(ws.eligible[0]).selection.choices == {"stamp": True, **{"compress": False, "reduce": False}}
     ws.pane_view(ws.eligible[0]).selection.choices["stamp"] = False
     _apply(tmp_path, ws, config)
 
@@ -310,7 +309,7 @@ def test_unchecking_stamp_on_stamp_only_file_returns_the_original(tmp_path: Path
     # 消したスタンプに、読み込み直しでまたチェックが付くことはない（次の更新で
     # 意図せず付け直されない）。
     again = _workspace(tmp_path, config)
-    assert again.pane_view(again.eligible[0]).selection.choices == {"stamp": False}
+    assert again.pane_view(again.eligible[0]).selection.choices == {"stamp": False, **{"compress": False, "reduce": False}}
     assert not again.plan_update().has_work
     # チェックを入れ直して更新すれば、また付く。その後は「付けない」の印も消える。
     again.pane_view(again.eligible[0]).selection.choices["stamp"] = True
@@ -393,3 +392,25 @@ def test_stamp_unchecked_before_update_stays_unchecked_after_reload(tmp_path: Pa
     restore_all(tmp_path)
     restored = _workspace(tmp_path, config)
     assert all(restored.pane_view(r).selection.choices["stamp"] for r in restored.eligible)
+
+
+def test_empty_read_only_folders_are_removed(tmp_path: Path):
+    """OneDrive の下のフォルダには「読み取り専用」の印が付いていることがあり、Windows は、空でも
+    その印のあるフォルダを消さない。［元のファイルに戻す］の後に、空のフォルダを残さない。"""
+    import os
+    import stat
+
+    from mints_prep.processors.updater import _remove_empty_dirs
+
+    top = tmp_path / "元のファイル"
+    inner = top / "材料"
+    inner.mkdir(parents=True)
+    keep = tmp_path / "残す"
+    keep.mkdir()
+    (keep / "a.txt").write_text("x", encoding="utf-8")
+    os.chmod(inner, stat.S_IREAD)
+    os.chmod(top, stat.S_IREAD)
+    _remove_empty_dirs(top)
+    _remove_empty_dirs(keep)
+    assert not top.exists()
+    assert (keep / "a.txt").exists()  # 空でないフォルダは消さない

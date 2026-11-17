@@ -37,7 +37,9 @@ ROOT = Path(__file__).resolve().parent.parent
 # source/ に含めるソース一式。samplesの実測データ・primary-sources（一次資料
 # 現物。著作権の観点から再配布しない）・__pycache__・.pyc等は含めない
 # （Ver.100の構成を踏襲）。
-_SOURCE_FILES = ["CLAUDE.md", "LICENSE", "main.py", "mints_prep.spec", "pytest.ini", "requirements.txt"]
+_SOURCE_FILES = [
+    "CLAUDE.md", "LICENSE", "THIRD_PARTY_NOTICES.txt", "main.py", "mints_prep.spec", "pytest.ini", "requirements.txt",
+]
 _SOURCE_DIR_SPECS: list[tuple[str, str, tuple[str, ...]]] = [
     # (相対パス, コピー先の相対パス, 追加で除外するディレクトリ名のタプル)
     # __pycache__・.pyc・.pytest_cacheはどのディレクトリでも常に除外する
@@ -72,8 +74,10 @@ def build(version: str) -> Path:
     dist_config = ROOT / "dist" / "config.yaml"
     manual_pdf = ROOT / "docs" / "manual" / f"VA_mints_操作マニュアル_{version}.pdf"
     license_file = ROOT / "LICENSE"
+    # 使っている部品のライセンスの表示（scripts/make_notices.py で作る。2026-11-17 から配布物に添える）
+    notices_file = ROOT / "THIRD_PARTY_NOTICES.txt"
 
-    missing = [p for p in (dist_exe, dist_config, manual_pdf, license_file) if not p.exists()]
+    missing = [p for p in (dist_exe, dist_config, manual_pdf, license_file, notices_file) if not p.exists()]
     if missing:
         joined = "\n  ".join(str(p) for p in missing)
         raise FileNotFoundError(
@@ -89,6 +93,7 @@ def build(version: str) -> Path:
     shutil.copy2(dist_exe, package_dir / "VA_mints.exe")
     shutil.copy2(dist_config, package_dir / "config.yaml")
     shutil.copy2(license_file, package_dir / "LICENSE")
+    shutil.copy2(notices_file, package_dir / "THIRD_PARTY_NOTICES.txt")
 
     manual_dir = package_dir / "マニュアル"
     manual_dir.mkdir()

@@ -14,9 +14,11 @@
 見出しの背景色など、ごく普通の文書装飾（塗り矩形の上に文字を描く構造）が
 軒並み「墨消し下に文字残存」と誤検出されるため。
 
-【既知の限界】次の形態は検出できない：(a) 画像として貼り付けられた黒帯、
+【既知の限界】次の形態は、上の照合では検出できない：(a) 画像として貼り付けられた黒帯、
 (b) rect以外のパス（曲線・線分の組み合わせ）で描かれた塗りつぶし（いずれも
-pdfplumberのpage.rectsに現れないため）、(c) 白・薄色の塗り矩形で文字を隠す
+pdfplumberのpage.rectsに現れないため）。(a)(b) は、2026-11-17 から、ページを画像にして
+文字の枠が真っ黒な所を探す検査（_raster_hidden_text。スキャンに OCR をかけた後、画像の上で
+黒く塗った場合の、見えない OCR の文字の残り）で補う。(c) 白・薄色の塗り矩形で文字を隠す
 失敗墨消し（上記の暗色限定の裏返し。明色まで対象にすると通常の文書装飾が
 軒並み誤検出になるため、意図的に対象外とする）。本検証は「検出できたものを
 警告する」補助であり、墨消しの完全性を保証するものではない。
@@ -94,6 +96,86 @@ def _covering_boxes(page: "pdfplumber.page.Page") -> list[tuple[float, float, fl
     return boxes
 
 
+# 画像の上の黒塗り（Ver300。2026-11-17 班長指示「隠した所に OCR の文字が残っていないか」の検査）。
+# スキャンして OCR（文字の読み取り）をかけた後に、画像の上で黒く塗って隠すと、塗った下の文字が、
+# 見えない OCR の文字として残る（準備の手引39頁の注意と同じ種類の問題）。上の塗りつぶし矩形の
+# 照合では、画像に描き込んだ黒は見つけられない（【既知の限界】(a)）。そこで、ページを画像に
+# して（ファイルは変えない）、文字の枠の中がほとんど真っ黒な文字が続いている所を探す。
+# ふつうの黒い文字は、枠（字の高さいっぱいの枠）の中に白い所があるので、当たらない。
+_RASTER_DPI = 72  # 画像にするときの細かさ（36 では、小さい字の白い所がつぶれて当たった）。
+_MIN_BOX_PX = 4  # 字の枠がこれより小さい（大きさのない字・ごく小さい字）ものは見ない。
+_DARK_PIXEL = 64  # この明るさ（0〜255）より暗い画素を「黒」とみなす。
+_DARK_RATIO = 0.95  # 枠の中の「黒」の割合がこれ以上なら、黒く塗られた所の下の文字とみなす。
+_MIN_RUN = 3  # 続けてこの字数以上のときだけ知らせる（1・2字の偶然の当たりを避ける）。
+# 伏せ字として、わざと書いた記号（見えている文字。下に隠れたものはない）。
+_MASK_GLYPHS = set("■□▪▫█▇▆▅▄▃▂▁●○◆◇▲△▼▽★☆※＊*×")
+
+
+def _raster_hidden_text(path: Path, skip_pages: set[int]) -> list[tuple[int, str]]:
+    """画像にしたページで、黒く塗られた所の下にある文字の並び（ページ、文字の例）。"""
+    import pypdfium2 as pdfium
+
+    found: list[tuple[int, str]] = []
+    scale = _RASTER_DPI / 72
+    pdf = pdfium.PdfDocument(str(path))
+    try:
+        for index in range(len(pdf)):
+            if index + 1 in skip_pages:
+                continue
+            page = pdf[index]
+            textpage = page.get_textpage()
+            try:
+                count = textpage.count_chars()
+                if count <= 0:
+                    continue
+                # 回転の属性は、手元の写しだけで外す（文字の座標と画像の向きをそろえる）。
+                if page.get_rotation():
+                    page.set_rotation(0)
+                left, _bottom, _right, top = page.get_cropbox()
+                image = page.render(scale=scale).to_pil().convert("L")
+                width, height = image.size
+                runs: list[str] = []
+                run: list[str] = []
+
+                def flush() -> None:
+                    text = "".join(run).strip()
+                    if len(text) >= _MIN_RUN:
+                        runs.append(text)
+                    run.clear()
+
+                for i in range(count):
+                    char = textpage.get_text_range(i, 1)
+                    if not char.strip() or char in _MASK_GLYPHS:
+                        if char.strip():
+                            flush()
+                        elif run:
+                            run.append(" ")
+                        continue
+                    l, b, r, t = textpage.get_charbox(i, loose=True)
+                    x0, x1 = int((l - left) * scale), int((r - left) * scale + 0.999)
+                    y0, y1 = int((top - t) * scale), int((top - b) * scale + 0.999)
+                    x0, y0 = max(0, x0), max(0, y0)
+                    x1, y1 = min(width, x1), min(height, y1)
+                    if x1 - x0 < _MIN_BOX_PX or y1 - y0 < _MIN_BOX_PX:
+                        flush()
+                        continue
+                    histogram = image.crop((x0, y0, x1, y1)).histogram()
+                    total = sum(histogram)
+                    if total and sum(histogram[:_DARK_PIXEL]) / total >= _DARK_RATIO:
+                        run.append(char)
+                    else:
+                        flush()
+                flush()
+                for text in runs:
+                    found.append((index + 1, text))
+            finally:
+                textpage.close()
+                page.close()
+    finally:
+        pdf.close()
+    return found
+
+
 def detect_redaction_residue(path: Path) -> RedactionFinding | None:
     """墨消し・マーカーの下に文字情報が残存していないかを検証する。
 
@@ -129,6 +211,22 @@ def detect_redaction_residue(path: Path) -> RedactionFinding | None:
 
                 if page_flagged:
                     pages_with_residual.append(page_index)
+
+        # 画像の上の黒塗りの下の文字（OCR の文字など）。上の照合で見つけたページは、二重に出さない。
+        raster_pages: list[int] = []
+        try:
+            raster = _raster_hidden_text(path, set(pages_with_residual))
+        except Exception:  # noqa: BLE001 - 画像にできないときは、この検査だけをとばす
+            raster = []
+        for page_index, text in raster:
+            snippet = text if len(text) <= _SNIPPET_MAX_LENGTH else text[:_SNIPPET_MAX_LENGTH] + "…"
+            details.append(
+                f"{page_index}ページ目：黒く塗られた所の下に文字情報が残存している可能性"
+                f"（スキャンの読み取り〔OCR〕の見えない文字など。例：「{snippet}」）"
+            )
+            if page_index not in raster_pages:
+                raster_pages.append(page_index)
+        pages_with_residual = sorted(set(pages_with_residual) | set(raster_pages))
 
         return RedactionFinding(
             has_residual_text=bool(pages_with_residual),

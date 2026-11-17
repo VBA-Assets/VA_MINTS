@@ -44,7 +44,7 @@ _SYSTEM_FILE_PREFIXES = ("~$",)
 _SYSTEM_FILE_SUFFIXES = (".tmp",)
 
 
-def _is_system_file(path: Path) -> bool:
+def is_system_file(path: Path) -> bool:
     name = path.name.lower()
     return (
         name in _SYSTEM_FILE_NAMES
@@ -53,20 +53,23 @@ def _is_system_file(path: Path) -> bool:
     )
 
 
-def _iter_files(root: Path, include_subfolders: bool):
+def _iter_files(root: Path):
     """読み込むファイルを列挙する。
 
-    Ver200（その場で更新する方式）から、次の2つのフォルダを特別に扱う。
-    - 「元のファイル」フォルダ（更新前のファイルの控え・更新記録）は、
-      サブフォルダを含める設定でも読み込まない（提出するものではないため）。
-    - 「提出用_NN」フォルダ（200MB分割で本ツールが仕分けた先）は、サブフォルダを
-      含めない設定でも読み込む（更新の後に読み込み直したとき、仕分けたファイルが
-      一覧から消えないように）。並びは、提出用_01、提出用_02 …、その後に直下のファイル。
+    読み込むのは、対象フォルダの直下のファイルと、直下の「提出用_NN」フォルダ
+    （200MB分割で本ツールが仕分けた先。更新の後に読み込み直したとき、仕分けたファイルが
+    一覧から消えないように）の中のファイル。並びは、提出用_01、提出用_02 …、その後に
+    直下のファイル。「元のファイル」フォルダ（更新前のファイルの控え・更新記録）は読まない。
+
+    ほかのサブフォルダの中は読まない（Ver300。2026-11-17 班長指示で「サブフォルダ内の
+    ファイルも含める」を外した。mints にはファイルを1つずつ送るのでフォルダの分けは
+    伝わらず、200MB分割をすると、どのサブフォルダのファイルも「提出用_NN」にまとめて
+    移すことになり、分けが崩れるため）。
     """
     backup = root / BACKUP_DIRNAME
 
     def _wanted(p: Path) -> bool:
-        return p.is_file() and not _is_system_file(p) and backup not in p.parents
+        return p.is_file() and not is_system_file(p) and backup not in p.parents
 
     batch_dirs = sorted(
         (d for d in root.iterdir() if d.is_dir() and is_batch_dir_name(d.name)),
@@ -74,14 +77,7 @@ def _iter_files(root: Path, include_subfolders: bool):
     )
     for d in batch_dirs:
         yield from (p for p in sorted(d.rglob("*")) if _wanted(p))
-    if include_subfolders:
-        yield from (
-            p
-            for p in root.rglob("*")
-            if _wanted(p) and not any(d in p.parents for d in batch_dirs)
-        )
-    else:
-        yield from (p for p in root.iterdir() if _wanted(p))
+    yield from (p for p in root.iterdir() if _wanted(p))
 
 
 def scan_file(path: Path, config: Config) -> FileRecord:
@@ -147,7 +143,7 @@ def scan_file(path: Path, config: Config) -> FileRecord:
     # 追加時チェックが累積サイズを対象とするため、単体で200MBを超えるファイルは
     # 他のファイルとの合算を問わず最初の追加操作自体が拒否されると強く推認される。
     # 合計サイズの分割（200MB分割）では解決できない別種の重大な問題のため、
-    # ここで検出する（対処〔圧縮・分割の実行〕はチェック専念方針により廃止）。
+    # ここで検出する（対処は、ページの位置でのファイルの分割〔Ver300。要件定義書 4.10〕と圧縮〔4.13〕）。
     exceeds_single_file_limit = size_bytes > config.upload.max_total_bytes
     if exceeds_single_file_limit:
         notes.append(
@@ -213,12 +209,12 @@ def _error_record(path: Path, exc: Exception, config: Config) -> FileRecord:
     )
 
 
-def scan_folder(root: Path, config: Config, include_subfolders: bool = False) -> ScanResult:
+def scan_folder(root: Path, config: Config) -> ScanResult:
     """フォルダ内全ファイルをスキャンし、ScanResult を返す。"""
     records: list[FileRecord] = []
-    for p in _iter_files(root, include_subfolders):
+    for p in _iter_files(root):
         try:
             records.append(scan_file(p, config))
         except Exception as exc:  # noqa: BLE001 - 個別ファイルの想定外エラーを隔離する
             records.append(_error_record(p, exc, config))
-    return ScanResult(root=root, include_subfolders=include_subfolders, records=records)
+    return ScanResult(root=root, records=records)

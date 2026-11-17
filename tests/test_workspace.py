@@ -34,6 +34,8 @@ def test_checks_are_set_automatically_from_detection(tmp_path: Path, config):
     assert ws.pane_view(_by_name(ws, "甲001 契約書.pdf")).selection.choices == {
         "strip_metadata": True,
         "stamp": True,
+        "compress": False,  # 圧縮（4.13）：小さいファイルには自動でチェックを付けない
+        "reduce": False,
     }
     # 証拠番号のないファイルにはスタンプの項目がない。
     assert "stamp" not in ws.pane_view(_by_name(ws, "準備書面.pdf")).selection.choices
@@ -55,12 +57,16 @@ def test_preview_state_follows_checks(tmp_path: Path, config):
     ws = _ws(tmp_path, config)
     record = ws.records[0]
     sel = ws.pane_view(record).selection
-    assert ws.preview_state(record) == ("甲001", None, 270, False)
-
+    assert ws.preview_state(record) == ("甲001", None)
     sel.choices["stamp"] = False
-    sel.choices["rotate"] = True
-    sel.rotate_degrees = 90
-    assert ws.preview_state(record) == (None, None, 90, True)
+    assert ws.preview_state(record) == (None, None)
+
+    # 向きの注意（A3の縦向き）：90°回せば外れ、180°では外れない。
+    assert ws.orientation_pages(record) == [0]
+    ws.rotate_pages(record, [0], 180)
+    assert ws.orientation_pages(record) == [0]
+    ws.rotate_pages(record, [0], 90)
+    assert ws.orientation_pages(record) == []
 
 
 def test_merged_member_preview_uses_its_own_branch_label(tmp_path: Path, config):

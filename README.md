@@ -1,9 +1,9 @@
-# VA mints — mints 提出前のファイル確認ツール
+# VA mints — mints 提出前のファイルの確認と準備のツール
 
-VA mints は、民事裁判書類電子提出システム「mints」の「記録」への提出前に、フォルダ単位でファイル群の内容を確認し、mints の制約（用紙サイズ・ファイル名・パスワードの有無・証拠番号標記など）に適合しているかを一括してチェックする、Windows 用の無料ツールです（Python 製）。
+VA mints は、民事裁判書類電子提出システム「mints」の「記録」への提出前に、フォルダ単位でファイル群の内容を確認し、mints の制約（用紙サイズ・ファイル名・パスワードの有無・証拠番号標記など）に適合しているかを一括してチェックする、Windows 用の無料ツールです（Python 製）。Ver300 からは、提出用の PDF の準備（ページの削除・挿入・並べ替え・回転、ファイルの結合・分割、ファイル名と証拠番号、枝番の区切り、圧縮、用紙を A4 にそろえる処理など）も、このツールで行えます。
 
 - 配布：[VBAアセット](https://vba-assets.net/)（実行ファイルとインストーラーは、サイトの記事からダウンロードしてください）
-- ライセンス：MIT License（[LICENSE](LICENSE)）
+- ライセンス：MIT License（[LICENSE](LICENSE)）。使っている部品のライセンスは [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
 - 操作マニュアル：[docs/manual/VA_mints_操作マニュアル.md](docs/manual/VA_mints_操作マニュアル.md)
 - 要件定義：[docs/03_requirements.md](docs/03_requirements.md)
 

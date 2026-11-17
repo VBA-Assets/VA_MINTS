@@ -141,6 +141,13 @@ def apply_theme(root: tk.Tk) -> None:
             padding=padding, width=0, anchor=anchor, justify="center",
         )
         style.map(name, **ribbon_states)
+    # 押すとメニューが開くリボンのボタン（［回転］。2026-11-17）：小さいボタン（Ribbon.TButton）と
+    # 同じ見た目に、右に小さな下向きの三角を付ける。
+    style.configure(
+        "Ribbon.TMenubutton", background=WINDOW_BG, bordercolor=WINDOW_BG, lightcolor=WINDOW_BG,
+        darkcolor=WINDOW_BG, padding=(3, 1), width=0, anchor="w", arrowcolor=TEXT, arrowsize=6,
+    )
+    style.map("Ribbon.TMenubutton", arrowcolor=[("disabled", DISABLED_TEXT)], **ribbon_states)
     style.configure("Ribbon.TFrame", background=WINDOW_BG)
     style.configure("Ribbon.TLabel", background=WINDOW_BG)
     style.configure("RibbonGroup.TLabel", background=WINDOW_BG, foreground=NOTE, padding=(0, 0, 0, 2))

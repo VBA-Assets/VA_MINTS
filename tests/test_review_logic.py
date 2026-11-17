@@ -5,7 +5,7 @@ from mints_prep.config import EvidenceNumberConfig, FilenameConfig
 from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
 from mints_prep.processors.evidence_merger import find_branch_merge_groups
 from mints_prep.processors.output_writer import PlannedCopy, plan_output_filenames
-from mints_prep.ui.review_logic import ReviewItem, apply_review_choices, build_review_options
+from mints_prep.ui.review_logic import ReviewItem, apply_review_choices, build_review_options, orientation_notice
 
 _FILENAME_CONFIG = FilenameConfig(
     max_length=100,
@@ -178,7 +178,8 @@ def test_build_review_options_empty_when_nothing_applicable():
 
     options = build_review_options(_item(prelim), _FILENAME_CONFIG)
 
-    assert options == []
+    # 圧縮の項目（4.13。Ver300）は、PDF にいつも出す（小さいファイルでは、チェックなし）。
+    assert [(o.key, o.default_checked) for o in options] == [("compress", False), ("reduce", False)]
 
 
 def test_build_review_options_includes_sanitize_when_needed():
@@ -397,70 +398,6 @@ def _mismatch_record(name: str = "甲001 横置き.pdf"):
     )
 
 
-def test_rotate_option_offered_for_orientation_mismatch():
-    """向き不一致の単独PDFには「向き補正」の実行可否チェックボックスを提示し、
-    赤字の情報項目（検出のみ）としては表示しない。既定はOFF（回転方向は
-    プレビューを見たユーザーが判断するため）。"""
-    prelim = PlannedCopy(record=_mismatch_record(), output_filename="甲001 横置き.pdf")
-
-    options = build_review_options(_item(prelim), _FILENAME_CONFIG)
-
-    rotate_opt = next(o for o in options if o.key == "rotate")
-    assert rotate_opt.enabled is True
-    assert rotate_opt.default_checked is False
-    assert "90°回転" in rotate_opt.label
-    assert not any("向きが基本形と不一致" in o.label for o in options if not o.enabled)
-
-
-def test_apply_review_choices_rotate_on_sets_degrees():
-    prelim = PlannedCopy(record=_mismatch_record(), output_filename="甲001 横置き.pdf")
-
-    final_right = apply_review_choices(
-        _item(prelim), {"rotate": True}, _FILENAME_CONFIG, rotate_degrees=90
-    )
-    final_left = apply_review_choices(
-        _item(prelim), {"rotate": True}, _FILENAME_CONFIG, rotate_degrees=270
-    )
-    final_off = apply_review_choices(_item(prelim), {"rotate": False}, _FILENAME_CONFIG)
-
-    assert final_right.rotate_degrees == 90
-    assert final_left.rotate_degrees == 270
-    assert final_off.rotate_degrees is None
-
-
-def test_rotate_option_not_offered_for_merge_groups(tmp_path: Path):
-    """結合グループには向き補正を提供しない（メンバーの向き不一致は従来どおり
-    検出のみの情報項目として表示される）。"""
-    from mints_prep.models import PdfFinding
-
-    member1 = _record_with_real_file(tmp_path, "甲001-1 領収書.pdf")
-    p2 = make_a4_pdf(tmp_path / "甲001-2 領収書.pdf")
-    member2 = FileRecord(
-        path=p2,
-        size_bytes=p2.stat().st_size,
-        format_status=FormatStatus.RECORD_READY,
-        detected_format="PDF",
-        classification=Classification.B_NEEDS_FIX,
-        filename_finding=FilenameFinding(
-            length=len(p2.name), exceeds_max_length=False, exceeds_warning_length=False
-        ),
-        pdf_finding=PdfFinding(
-            has_password=False,
-            page_size_judgments=("A4",),
-            page_orientations=("横",),
-            orientation_mismatch_pages=(1,),
-        ),
-    )
-    prelim = _merge_preliminary([member1, member2])
-
-    options = build_review_options(_item(prelim), _FILENAME_CONFIG)
-
-    assert all(o.key != "rotate" for o in options)
-    assert any(
-        not o.enabled and "向きが基本形と不一致" in o.label and "甲001-2" in o.label
-        for o in options
-    )
-
 
 def test_pane_warnings_do_not_repeat_remarks():
     """右ペインの赤字の注意と備考に、同じ内容を二度書かない（2026-11-16 班長指摘）。
@@ -513,3 +450,18 @@ def test_pane_warnings_do_not_repeat_remarks():
     )
     _, notes = build_pane_warnings(unsupported, ["未対応形式のため処理対象外"], is_target=False)
     assert notes == []
+
+
+def test_orientation_is_a_notice_not_an_option_or_unfixable_item():
+    """向きの不一致は、右のペインの処理の項目（旧「向き補正」）にも、検出のみの赤字にも出さない。
+    回すかどうかは利用者が決め、ページの回転で回す（2026-11-17 班長決定）。"""
+    record = _mismatch_record()
+    prelim = PlannedCopy(record=record, output_filename="甲001 横置き.pdf")
+    options = build_review_options(_item(prelim), _FILENAME_CONFIG)
+    assert all(o.key != "rotate" for o in options)
+    assert not any("向き" in o.label for o in options if not o.enabled)
+
+    notice = orientation_notice(record, [0])
+    assert "A4の横向き" in notice and "（1ページ目）" in notice
+    assert "そのままで構いません" in notice and "タイムスタンプ" in notice
+    assert orientation_notice(record, []) is None  # 回し終えたら出さない

@@ -32,6 +32,14 @@ BUTTON_ICONS = {
     "ファイルを読み込み": "folder_open",
     "ファイルを更新": "save",
     "元のファイルに戻す": "arrow_undo",
+    # 「ページ」の組（Ver300。2026-11-17 班長指示）。回転・やり直すは、元に戻すと同じく自作。
+    "ページを削除": "delete",
+    "ページを挿入": "document_add",
+    "ファイルを分割": "document_page_break",
+    "回転": "arrow_rotate",
+    "枝番の区切り": "text_number_list_ltr",
+    "元に戻す": "arrow_undo",
+    "やり直す": "arrow_redo",
 }
 
 

@@ -1,6 +1,7 @@
 """メタデータ除去（要件定義書 4.5「メタデータ除去」）。
 
-PDFプロパティ、画像Exif（GPS含む）、音声・動画タグ情報を一括除去する。
+PDFプロパティ、画像Exif（GPS含む）、音声（MP3）のタグ情報を除去する。動画（MP4）のタグは、
+見つけて知らせるだけで、取り除かない（can_strip_metadata。2026-11-17）。
 根拠：docs/02_constraints-report.md 第3章5節（Q&A 10頁、操作マニュアル別紙3）。
 
 Office文書プロパティの除去は、Office文書自体が書き出し対象（記録対応形式）
@@ -12,9 +13,9 @@ Office文書プロパティの除去は、Office文書自体が書き出し対�
 画面）でユーザーの確認を得たうえで実行すること（CLAUDE.md「絶対に譲れない
 設計原則」3）。元ファイルは変更しない（出力先へ除去済みコピーを新規に書き出す）。
 
-【既知の制約】MP3/MP4のタグ除去はmutagenで実装しているが、自動テストによる
-検証はPDF・画像（JPEG/PNG）にとどまる（有効なMP3/MP4フィクスチャの合成が
-複雑なため）。音声・動画ファイルでの実運用前には手動確認を推奨する。
+MP3 のタグの除去は、Ver201 までは mutagen（GPL-2.0-or-later。VA mints の MIT License と合わない）を
+使っていたが、2026-11-17 に、先頭・末尾のタグの範囲を除いて写す自前の処理（detectors/av_tags.py）に
+替えた。
 """
 
 from __future__ import annotations
@@ -25,8 +26,9 @@ from pathlib import Path
 import pikepdf
 from PIL import Image
 
+from mints_prep.detectors.av_tags import strip_mp3_tags
+
 _IMAGE_FORMATS = {"JPEG", "PNG"}
-_AUDIO_VIDEO_FORMATS = {"MP3", "MP4"}
 
 
 def strip_pdf_metadata(src: Path, dest: Path) -> None:
@@ -140,20 +142,10 @@ def strip_image_metadata(src: Path, dest: Path) -> None:
     _strip_jpeg_metadata_segments(src, dest)
 
 
-def strip_audio_video_metadata(src: Path, dest: Path) -> None:
-    """音声・動画のタグ情報（作成者・作成ソフト・GPS座標等）を除去したコピーを作成する。
-
-    検出側（detectors/metadata_detector.py）と同じく生タグAPI（easy=False）を
-    使う。delete()はマッピング済みキーに限らずタグ全体（MP4の©xyzアトム等の
-    非標準タグを含む）を除去するため、検出された項目が除去後も残ることはない。
-    """
-    import mutagen
-
-    shutil.copy2(src, dest)
-    audio = mutagen.File(dest)
-    if audio is not None and audio.tags is not None:
-        audio.delete()
-        audio.save()
+def can_strip_metadata(detected_format: str) -> bool:
+    """このツールでメタデータを取り除ける形式か。MP4 は、タグを見つけるだけで、取り除かない
+    （detectors/av_tags.py。箱の大きさとデータの位置の書き換えが要り、証拠を壊すおそれがある）。"""
+    return detected_format == "PDF" or detected_format in _IMAGE_FORMATS or detected_format == "MP3"
 
 
 def strip_metadata(src: Path, dest: Path, detected_format: str) -> None:
@@ -162,8 +154,9 @@ def strip_metadata(src: Path, dest: Path, detected_format: str) -> None:
         strip_pdf_metadata(src, dest)
     elif detected_format in _IMAGE_FORMATS:
         strip_image_metadata(src, dest)
-    elif detected_format in _AUDIO_VIDEO_FORMATS:
-        strip_audio_video_metadata(src, dest)
+    elif detected_format == "MP3":
+        # 先頭・末尾のタグ（ID3・APE）の範囲だけを除いて写す。音声のデータはそのまま。
+        strip_mp3_tags(src, dest)
     else:
-        # 対応外形式（想定外の呼び出し）は安全側としてそのままコピーする。
+        # 取り除けない形式（MP4。can_strip_metadata）・想定外の呼び出しは、安全側としてそのまま写す。
         shutil.copy2(src, dest)

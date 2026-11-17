@@ -19,9 +19,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from mints_prep.config import FilenameConfig
+from mints_prep.config import CompressConfig, FilenameConfig, PdfConfig
 from mints_prep.models import FileRecord
 from mints_prep.processors.filename_sanitizer import needs_sanitization, sanitize_filename
+from mints_prep.processors.metadata_remover import can_strip_metadata
 from mints_prep.processors.output_writer import PlannedCopy
 from mints_prep.processors.report_writer import collect_check_warnings, collect_critical_warnings
 
@@ -37,7 +38,7 @@ class ReviewItem:
 
 @dataclass(frozen=True)
 class ReviewOption:
-    key: str  # "sanitize" / "strip_metadata" / "stamp" / "rotate" / "info_N"（検出のみ）
+    key: str  # "sanitize" / "strip_metadata" / "stamp" / "fit_a4" など / "info_N"（検出のみ）
     label: str
     default_checked: bool
     # Falseの場合、本ツールでは対処できない（検出のみ）項目としてチェック
@@ -60,6 +61,7 @@ def build_review_options(
     item: ReviewItem,
     filename_config: FilenameConfig,
     applied: frozenset[str] = frozenset(),
+    compress_config: CompressConfig | None = None,
 ) -> list[ReviewOption]:
     """このアイテムに提示すべきチェックボックスと、その既定値を決定する。
 
@@ -84,23 +86,25 @@ def build_review_options(
     info_options: list[ReviewOption] = []
     actionable_options: list[ReviewOption] = []
 
-    # 向き補正（4.6。orientation_fixer参照）を提供できるか：単独ファイルの
-    # PDFで向き不一致ページが検出されている場合のみ。提供する場合、向き
-    # 不一致は「検出のみ」の情報項目ではなく実行可否を選べる項目になるため、
-    # 情報項目一覧からは除外する。
-    offers_rotate = (
-        prelim.merge_group is None
-        and prelim.record.pdf_finding is not None
-        and bool(prelim.record.pdf_finding.orientation_mismatch_pages)
-    )
-
+    # 向きの不一致（4.6）は、知らせるだけにする。回すのは、ページの回転（4.10）で利用者が
+    # ページを選んで行う（2026-11-17 班長決定。右のペインの「向き補正」は廃止した）。
     detected_records = (
         [m.record for m in prelim.merge_group.members] if prelim.merge_group is not None else [prelim.record]
     )
+    # 用紙を A4 にそろえる（4.15）・付箋等の除去（4.16）：PDF で、パスワードなしに開けるもの。
+    # 結合グループは、結合する各ファイルの検出結果を合わせる。
+    readable = [
+        r.pdf_finding for r in detected_records
+        if r.detected_format == "PDF" and r.pdf_finding is not None and not r.pdf_finding.has_password
+    ]
+    offers_fit = len(readable) == len(detected_records) and any(pf.non_a4a3_pages for pf in readable)
+    hidden = [pf for pf in readable if pf.has_hidden_content] if len(readable) == len(detected_records) else []
     for record in detected_records:
         for label in _unfixable_detection_labels(record):
-            if offers_rotate and "向きが基本形と不一致" in label:
-                continue
+            if "向きが基本形と不一致" in label:
+                continue  # 検出のみの事項ではない（ページを回して対処する。orientation_notice）
+            if offers_fit and "用紙寸法がA4/A3以外" in label:
+                continue  # そろえる項目に、ページを書いて出す
             # collect_*の文言はレポート用の「・ファイル名：内容」形式。この画面は
             # 1ファイルずつの表示でファイル名は画面上部に出ているため、単独
             # ファイルではファイル名接頭辞を除去する（重複表示の回避）。結合
@@ -136,7 +140,48 @@ def build_review_options(
             )
         )
 
-    if prelim.record.metadata_finding is not None and prelim.record.metadata_finding.has_metadata:
+    if hidden:
+        comments = sum(pf.hidden_comments for pf in hidden)
+        attachments = sum(pf.hidden_attachments for pf in hidden)
+        found = []
+        if comments:
+            found.append(f"付箋・コメント（作成者名を含む）{comments}件")
+        if attachments:
+            found.append(f"添付ファイル{attachments}件")
+        if any(pf.has_javascript for pf in hidden):
+            found.append("JavaScript（スクリプト）")
+        actionable_options.append(
+            ReviewOption(
+                key="strip_hidden",
+                label=(
+                    f"付箋・コメント・添付ファイルを取り除く：{'、'.join(found)}。"
+                    "ハイライトや図形などの見た目は残し、その中のコメントの文と作成者名だけを"
+                    "外します（付箋と添付ファイルのアイコンは消えます）"
+                ),
+                # 原本の作成者が付けたコメントが、証拠の内容であることもあるので、自動では
+                # チェックを付けない（更新の確認で、残っているファイルの数を示す）。
+                default_checked=False,
+            )
+        )
+
+    if (
+        prelim.record.metadata_finding is not None and prelim.record.metadata_finding.has_metadata
+        and not can_strip_metadata(prelim.record.detected_format)
+    ):
+        # MP4 のタグは、見つけて知らせるだけ（2026-11-17。detectors/av_tags.py）
+        fields = "、".join(prelim.record.metadata_finding.detected_fields)
+        info_options.append(
+            ReviewOption(
+                key=f"info_{len(info_options)}",
+                label=(
+                    f"メタデータ：検出項目：{fields}。動画のタグは、このツールでは取り除けません"
+                    "（位置などを外す必要があれば、ほかのアプリで取り除いてから読み込み直してください）"
+                ),
+                default_checked=False,
+                enabled=False,
+            )
+        )
+    elif prelim.record.metadata_finding is not None and prelim.record.metadata_finding.has_metadata:
         fields = "、".join(prelim.record.metadata_finding.detected_fields)
         actionable_options.append(
             ReviewOption(
@@ -146,20 +191,25 @@ def build_review_options(
             )
         )
 
-    if offers_rotate:
-        pages = "、".join(str(p) for p in prelim.record.pdf_finding.orientation_mismatch_pages)
+    if offers_fit:
+        if prelim.merge_group is None:
+            pages = "、".join(str(p) for p in readable[0].non_a4a3_pages)
+            where = f"{pages}ページ目"
+        else:
+            where = "、".join(
+                r.path.name for r in detected_records if r.pdf_finding.non_a4a3_pages
+            )
         actionable_options.append(
             ReviewOption(
-                key="rotate",
+                key="fit_a4",
                 label=(
-                    f"向き補正：基本形（A4=縦・A3=横）に合わせて90°回転（{pages}ページ目。"
-                    "回転属性のみの変更で、ページの内容・画質・テキストは変わりません）"
+                    f"用紙をA4にそろえる：A4・A3以外の大きさのページ（{where}）を、同じ向きのA4の"
+                    "用紙に載せます。大きいページは縮め、小さいページは原寸のまま真ん中に置きます"
+                    "（ページは画像にしません）"
                 ),
-                # 内容の向き（文字がどちらを向いているか）はツールには解析
-                # できず、回転方向を誤ると読めない向きになるため、既定はOFF。
-                # ONにするとプレビューが回転後の見た目に切り替わるので、
-                # 目視確認のうえで適用を判断してもらう。
-                default_checked=False,
+                # A4・A3 以外のページがあると、mints が受け付けない（別紙2 エラー#46）ので、
+                # 自動でチェックを付ける（2026-11-17）。縮めた見た目はプレビューで確かめる。
+                default_checked=True,
             )
         )
 
@@ -192,7 +242,50 @@ def build_review_options(
             )
         )
 
+    actionable_options.extend(_compress_options(prelim, applied, compress_config))
     return info_options + actionable_options
+
+
+def _compress_options(
+    prelim: PlannedCopy, applied: frozenset[str], compress_config: CompressConfig | None
+) -> list[ReviewOption]:
+    """圧縮（要件定義書 4.13）の項目。①は PDF だけ、②は PDF・JPEG・PNG。"""
+    record = prelim.record
+    fmt = record.detected_format
+    if fmt not in ("PDF", "JPEG", "PNG"):
+        return []
+    if record.pdf_finding is not None and record.pdf_finding.has_password:
+        return []  # 復号キーがないと中身を読めない
+    cfg = compress_config or CompressConfig()
+    options: list[ReviewOption] = []
+    # 以前の更新で済ませた圧縮は、チェックの入った状態で出す（証拠番号スタンプと同じく、
+    # チェックは「済んでいる」ことを表す。入れたままなら何もせず、外して更新すると、元の
+    # ファイルから作り直す。2026-11-16 班長指示。ui/workspace.py）。
+    if fmt == "PDF":
+        large = record.size_bytes >= cfg.auto_lossless_mb * 1024 * 1024
+        options.append(
+            ReviewOption(
+                key="compress",
+                label=(
+                    "画質を損なわない圧縮：PDFの中の使っていないデータを除き、データを詰め直して"
+                    "小さくします（見た目・文字・画像は変わりません）"
+                ),
+                # 大きなファイルにだけ、自動でチェックを付ける。
+                default_checked="compress" in applied or large,
+            )
+        )
+    options.append(
+        ReviewOption(
+            key="reduce",
+            label=(
+                "画像を軽くする：画像の解像度を下げて小さくします（細かい字や写真が粗くなることが"
+                "あります。プレビューで確かめてください）"
+            ),
+            # 画質が落ちるので、自動ではチェックを付けない（要件定義書 4.13）。済んだものだけ入れる。
+            default_checked="reduce_images" in applied,
+        )
+    )
+    return options
 
 
 def apply_review_choices(
@@ -200,7 +293,9 @@ def apply_review_choices(
     choices: dict[str, bool],
     filename_config: FilenameConfig,
     stamp_offset_mm: tuple[float, float] | None = None,
-    rotate_degrees: int = 270,
+    reduce_dpi: int | None = None,
+    jpeg_quality: int = 80,
+    pdf_config: PdfConfig | None = None,
 ) -> PlannedCopy:
     """チェックボックスの選択結果（choices）から、最終的なPlannedCopyを組み立てる。
 
@@ -211,25 +306,30 @@ def apply_review_choices(
     場合の (margin_top_mm, margin_right_mm) の上書き値。Noneならconfig.yamlの
     既定値をそのまま使う。スタンプを実行しない場合は無視される。このファイル
     （又は結合グループ）にのみ適用し、config.yamlの既定値自体は変更しない。
-
-    rotate_degrees: 向き補正（choices["rotate"]がTrue）の場合の回転角
-    （時計回り。右90°=90、左90°=270。既定は左90°＝画面側の既定と一致）。
-    回転しない場合は無視される。
     """
     prelim = item.preliminary
     sanitize_on = choices.get("sanitize", False)
     strip_metadata_on = choices.get("strip_metadata", False)
     stamp_on = choices.get("stamp", False)
-    rotate_on = choices.get("rotate", False)
 
     margin_top_mm, margin_right_mm = (
         stamp_offset_mm if stamp_on and stamp_offset_mm is not None else (None, None)
+    )
+    # 圧縮（4.13）。②の解像度は、画面で選んだもの（なければ設定ファイルの先頭）。
+    compress = dict(
+        compress_lossless=choices.get("compress", False),
+        reduce_dpi=(reduce_dpi or CompressConfig().reduce_dpi[0]) if choices.get("reduce", False) else None,
+        jpeg_quality=jpeg_quality,
+        # 用紙を A4 にそろえる（4.15。寸法は設定ファイルの pdf）・付箋等の除去（4.16）。
+        fit_a4=pdf_config if choices.get("fit_a4", False) and pdf_config is not None else None,
+        strip_hidden=choices.get("strip_hidden", False),
     )
 
     if prelim.merge_group is not None:
         base_name = prelim.output_filename
         output_filename = sanitize_filename(base_name, filename_config) if sanitize_on else base_name
         return PlannedCopy(
+            **compress,
             record=prelim.record,
             output_filename=output_filename,
             strip_metadata=strip_metadata_on,
@@ -243,6 +343,7 @@ def apply_review_choices(
     original_name = prelim.record.path.name
     output_filename = sanitize_filename(original_name, filename_config) if sanitize_on else original_name
     return PlannedCopy(
+        **compress,
         record=prelim.record,
         output_filename=output_filename,
         strip_metadata=strip_metadata_on,
@@ -250,7 +351,36 @@ def apply_review_choices(
         stamp_margin_top_mm=margin_top_mm,
         stamp_margin_right_mm=margin_right_mm,
         filename_sanitized=sanitize_on,
-        rotate_degrees=rotate_degrees if rotate_on else None,
+    )
+
+
+def orientation_notice(record: FileRecord, positions: list[int]) -> str | None:
+    """右のペインに出す向きの注意（4.6）。positions は、注意を出すページ（下書きの何ページ目か。
+    0始まり。Workspace.orientation_pages）。なければ None。
+
+    mints は縦向き・横向きのどちらの PDF も受け付ける（操作マニュアル別紙4）。求められるのは、
+    内容の向きと用紙の向きを合わせること（mints が上の辺に付けるタイムスタンプが、文字に
+    重ならないように）。ツールには内容の向きが分からないので、回すかどうかは利用者が決める
+    （2026-11-17 班長指摘「縦使用でなければならないのか？」で、言い方を改めた）。
+    """
+    pf = record.pdf_finding
+    if not positions or pf is None:
+        return None
+    kinds = []
+    for page in pf.orientation_mismatch_pages:
+        if not 0 < page <= len(pf.page_size_judgments):
+            continue
+        kind = "A4の横向き" if pf.page_size_judgments[page - 1] == "A4" else "A3の縦向き"
+        if kind not in kinds:
+            kinds.append(kind)
+    pages = "、".join(str(p + 1) for p in positions)
+    return (
+        # 文ごとに行を改める（Tk は行頭の「、」を避けないので、長い1段落より読みやすい）。
+        f"向き：{'・'.join(kinds) or '向きの違う'}のページがあります（{pages}ページ目）。\n"
+        "mintsは縦向き・横向きのどちらも受け付けますが、内容の向きと用紙の向きが違うと、"
+        "mintsが上の辺に付けるタイムスタンプが文字に重なります。\n"
+        "内容の向きが違うページは、選んで［回転］の［左に90°回転］か［右に90°回転］で回してください。\n"
+        "表など、用紙の向きどおりの内容なら、そのままで構いません。"
     )
 
 

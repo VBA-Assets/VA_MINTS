@@ -58,6 +58,12 @@ def _ensure_pdf_font_registered() -> None:
 # スタンプの見た目（evidence_stamp.style）に対応する描画色。
 # 根拠：一次資料に色・枠の規定はなし（config.yaml参照）。旧・紙媒体実務の
 # 赤枠・赤字慣行に合わせたい場合の選択肢として用意する。
+# 証拠番号（「甲005-1」など）の字の上下の中央の、ベースラインからの高さ（字の大きさに対する割合）。
+# HeiseiKakuGo-W5 はフォントを埋め込まず、表示する側のゴシック体で描かれるため、Windows の主な
+# ゴシック体（MS ゴシック・メイリオ・游ゴシック・BIZ UDゴシック）で測った値（0.35〜0.36）にする
+# （2026-11-17。字はベースラインの下 0.06〜0.10 から上 0.77〜0.80 まで）。
+_EM_CENTER = 0.355
+
 _PDF_STYLE_COLORS = {"black": (0, 0, 0), "red": (1, 0, 0), "red_boxed": (1, 0, 0)}
 _IMAGE_STYLE_COLORS = {"black": "black", "red": "red", "red_boxed": "red"}
 
@@ -83,8 +89,12 @@ def stamp_pdf_page(page, label: str, config: EvidenceStampConfig) -> None:
     c.setFillColorRGB(*color)
     x = right - config.margin_right_mm * mm
     y = top - config.margin_top_mm * mm - config.font_size_pt
+    baseline = y
 
     if config.style == "red_boxed":
+        # 枠の上下の中央に、字の中央を合わせる（2026-11-17 班長指摘：字が枠の中央よりやや下に出ていた）。
+        # 字の中央（ベースラインの _EM_CENTER 字上）を、枠の中央（y + 字の大きさの半分）に合わせる。
+        baseline = y + config.font_size_pt * (0.5 - _EM_CENTER)
         text_width = c.stringWidth(label, _PDF_STAMP_FONT, config.font_size_pt)
         pad = config.box_padding_mm * mm
         c.setStrokeColorRGB(*color)
@@ -98,7 +108,7 @@ def stamp_pdf_page(page, label: str, config: EvidenceStampConfig) -> None:
             stroke=1,
         )
 
-    c.drawRightString(x, y, label)
+    c.drawRightString(x, baseline, label)
     c.save()
     buf.seek(0)
 
@@ -123,6 +133,31 @@ def stamp_pdf(input_path: Path, output_path: Path, label: str, config: EvidenceS
         if (page.rotation or 0) % 360 != 0:
             page.transfer_rotation_to_content()
         stamp_pdf_page(page, label, config)
+    with open(output_path, "wb") as f:
+        writer.write(f)
+
+
+def stamp_pdf_pages(
+    input_path: Path,
+    output_path: Path,
+    stamps: list[tuple[int, str]] | tuple[tuple[int, str], ...],
+    config: EvidenceStampConfig,
+) -> None:
+    """指定したページ（0始まり）に、それぞれのラベルを焼き込む（Ver300）。
+
+    ページの表から作った PDF（processors/pages.py）で、1ページ目以外にもスタンプを
+    押す場合に使う：結合したファイルの各材料の最初のページ（枝番ラベル）、
+    1つのファイルの中の枝番の区切り（要件定義書 4.11）。回転の扱いは stamp_pdf と同じ。
+    """
+    writer = PdfWriter(clone_from=str(input_path))
+    for index, label in stamps:
+        if not 0 <= index < len(writer.pages):
+            continue
+        page = writer.pages[index]
+        if (page.rotation or 0) % 360 != 0:
+            page.transfer_rotation_to_content()
+        stamp_pdf_page(page, label, config)
+    writer.metadata = None
     with open(output_path, "wb") as f:
         writer.write(f)
 

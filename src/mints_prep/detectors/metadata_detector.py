@@ -16,6 +16,7 @@ from pathlib import Path
 import pikepdf
 from PIL import ExifTags, Image
 
+from mints_prep.detectors.av_tags import mp3_tag_fields, mp4_tag_fields
 from mints_prep.models import MetadataFinding
 
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".gif"}
@@ -23,6 +24,8 @@ _OFFICE_DOCX = {".docx"}
 _OFFICE_XLSX = {".xlsx"}
 _OFFICE_PPTX = {".pptx"}
 _AUDIO_VIDEO_EXTS = {".mp3", ".mp4", ".wav", ".m4a", ".aac", ".mov", ".avi", ".wmv"}
+_ID3_EXTS = {".mp3", ".aac"}
+_MP4_EXTS = {".mp4", ".m4a", ".mov"}
 
 
 def _detect_pdf(path: Path) -> MetadataFinding:
@@ -124,22 +127,24 @@ def _detect_pptx(path: Path) -> MetadataFinding:
 
 
 def _detect_audio_video(path: Path) -> MetadataFinding | None:
-    import mutagen
+    """音声・動画のタグ（av_tags.py。Ver201 までの mutagen を、2026-11-17 に自前の読み取りに替えた）。
 
-    # easy=True（EasyタグAPI）は使わない：Easyタグはtitle/artist等の
-    # マッピング済みキーしか列挙せず、スマートフォン動画のGPS座標
-    # （MP4の©xyzアトム等）のようなマッピング外のタグを系統的に見逃す。
-    # 要件定義書4.2は「GPS位置情報等の有無を検出」と明記しており、
-    # 生タグ（easy=False）のキー一覧をそのまま検出対象とする。
-    audio = mutagen.File(path)
-    if audio is None:
-        # mutagenが解釈できないコンテナ（AVI/WMV等）。「メタデータなし」と
-        # 混同せず「検出不可」として扱う（旧Office形式のNone扱いと同じ。
-        # 呼び出し側で「検出未対応形式」の注記になる）。
+    タグの名前は、決まった項目（題名・作成者など）に限らず、見つけたものをすべて挙げる
+    （スマートフォンの動画の位置〔©xyz・com.apple.quicktime.location.ISO6709〕を見逃さない。
+    要件定義書 4.2「GPS位置情報等の有無を検出」）。
+    """
+    ext = path.suffix.lower()
+    if ext in _ID3_EXTS:
+        fields = tuple(mp3_tag_fields(path))
+    elif ext in _MP4_EXTS:
+        found = mp4_tag_fields(path)
+        if found is None:
+            return None
+        fields = tuple(found)
+    else:
+        # 読み方を持たない形式（WAV・AVI・WMV）。「メタデータなし」と混同せず「検出不可」と
+        # して扱う（旧Office形式のNone扱いと同じ。呼び出し側で「検出未対応形式」の注記になる）。
         return None
-    if not getattr(audio, "tags", None):
-        return MetadataFinding(has_metadata=False, detected_fields=())
-    fields = tuple(str(k) for k in audio.tags.keys())
     return MetadataFinding(has_metadata=bool(fields), detected_fields=fields)
 
 

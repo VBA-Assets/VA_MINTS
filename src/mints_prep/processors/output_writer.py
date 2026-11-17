@@ -21,13 +21,19 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from mints_prep.config import EvidenceStampConfig, FilenameConfig
+from mints_prep.config import EvidenceStampConfig, FilenameConfig, PdfConfig
 from mints_prep.detectors.filename_detector import check_filename
 from mints_prep.models import Classification, FileRecord, FormatStatus, MetadataFinding
+from mints_prep.processors.compress import (
+    compress_pdf_lossless,
+    reduce_image_file,
+    reduce_pdf_images,
+)
 from mints_prep.processors.evidence_merger import BranchGroup, merge_branch_group
-from mints_prep.processors.evidence_stamp import stamp_file
+from mints_prep.processors.evidence_stamp import stamp_file, stamp_pdf_pages
 from mints_prep.processors.metadata_remover import strip_metadata
-from mints_prep.processors.orientation_fixer import rotate_pdf_pages
+from mints_prep.processors.pages import PageRef, build_pdf
+from mints_prep.processors.pdf_cleanup import clean_pdf
 
 
 @dataclass(frozen=True)
@@ -50,12 +56,39 @@ class PlannedCopy:
     # 同名衝突回避の連番付与（_resolve_name_collisions／画面側のdedupe）で
     # 名前が変わったか。レポートで整形とは別の適用処理として記載する。
     renamed_for_collision: bool = False
-    # 向き補正（4.6の向き不一致に対する処理。processors/orientation_fixer.py）：
-    # 向き不一致として検出されたページ（record.pdf_finding.
-    # orientation_mismatch_pages）を、この角度（時計回り・90又は270）だけ
-    # /Rotate属性で回転して書き出す。Noneなら回転しない。単独ファイルの
-    # PDFのみ対象（結合グループでは提供しない）。
-    rotate_degrees: int | None = None
+    # ページの表（要件定義書 4.0・4.10。Ver300）。設定されていれば、record・merge_group
+    # のファイルをそのまま使わず、この表のとおりにページを並べた PDF を作ってから、
+    # stamps のスタンプとメタデータ除去を行う（stamp_label・merge_stamp は使わない）。
+    pages: tuple[PageRef, ...] | None = None
+    # pages を使うときのスタンプ：（ページの位置〔0始まり〕、ラベル）の並び。
+    stamps: tuple[tuple[int, str], ...] = ()
+    # ファイルの結合（Ver300。要件定義書 4.10）：この更新で、record のファイルに結合して
+    # なくなるファイル（対象フォルダの中のもの）。更新すると「元のファイル」フォルダへ
+    # 移る（［元のファイルに戻す］で戻る）。ページは pages に入れておくこと。
+    absorbed: tuple[Path, ...] = ()
+    # ファイルの分割（Ver300。要件定義書 4.10）。split：分ける前のファイル（後ろのページを
+    # 新しいファイルへ分けたもの）。created：分けて新しく作るファイル（record.path は、まだ
+    # ないファイルの位置。更新でなくなるファイルはなく、控えも作らない）。
+    split: bool = False
+    created: bool = False
+    # 圧縮（Ver300。要件定義書 4.13。processors/compress.py）。compress_lossless：①画質を
+    # 損なわない圧縮（PDF）。reduce_dpi：②画像を軽くする（PDF の中の画像・JPEG・PNG）
+    # ときの解像度。None は行わない。jpeg_quality：②で JPEG にするときの画質。
+    compress_lossless: bool = False
+    reduce_dpi: int | None = None
+    jpeg_quality: int = 80
+    # 画像（JPEG・PNG）を、record.path（いまのファイル）ではなく、このファイル（「元のファイル」
+    # フォルダの元の画像）から作り直す。済ませた②のチェックを外したときなど（ui/workspace.py）。
+    rebuild_from: Path | None = None
+    # 用紙を A4 にそろえる（Ver300。要件定義書 4.15。processors/pdf_cleanup.py）：A4・A3 以外の
+    # ページを、この寸法の A4 に載せる。None は行わない。strip_hidden：付箋・コメント・添付
+    # ファイル・JavaScript を取り除く（4.16）。どちらも PDF だけ。スタンプより前に行う。
+    fit_a4: PdfConfig | None = None
+    strip_hidden: bool = False
+
+    @property
+    def cleans(self) -> bool:
+        return self.fit_a4 is not None or self.strip_hidden
 
 
 def select_eligible_records(records: list[FileRecord]) -> list[FileRecord]:
@@ -245,6 +278,23 @@ def _effective_stamp_config(
     )
 
 
+def _compress_pdf_in_place(item: PlannedCopy, dest: Path) -> None:
+    """できあがった PDF（dest）に、②画像を軽くする → ①画質を損なわない圧縮 の順に行う。
+    スタンプ（文字）・メタデータ除去の後に行う（スタンプは画像ではないので粗くならない）。"""
+    if dest.suffix.lower() != ".pdf":
+        return
+    tmp = dest.with_name(dest.name + ".compress_tmp")
+    try:
+        if item.reduce_dpi is not None:
+            reduce_pdf_images(dest, tmp, item.reduce_dpi, item.jpeg_quality)
+            tmp.replace(dest)
+        if item.compress_lossless:
+            compress_pdf_lossless(dest, tmp)
+            tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def copy_to_output(
     planned: list[PlannedCopy],
     output_dir: Path,
@@ -266,24 +316,54 @@ def copy_to_output(
             else None
         )
 
-        # 向き補正（4.6）：他の処理（スタンプ→メタデータ除去）より先に、
-        # 検出済みの向き不一致ページの/Rotate属性を補正した一時ファイルを
-        # 作り、以降の処理はそれを入力とする（スタンプは回転補正後の
-        # 「閲覧時の右上」に載る）。結合グループでは提供しない。
-        source_path = item.record.path
-        rotate_tmp: Path | None = None
-        if item.rotate_degrees is not None and item.merge_group is None:
-            mismatch_pages = (
-                item.record.pdf_finding.orientation_mismatch_pages
-                if item.record.pdf_finding is not None
-                else ()
+        if item.pages is not None:
+            # ページの表から作る（Ver300）：表のとおりに並べる → スタンプ → メタデータ除去。
+            # 途中のファイルは、出力先の隣に一時的に作り、必ず消す。
+            built = dest.with_name(dest.name + ".pages_tmp")
+            stamped = dest.with_name(dest.name + ".pages_stamp_tmp")
+            cleaned = dest.with_name(dest.name + ".pages_clean_tmp")
+            try:
+                build_pdf(item.pages, built)
+                current = built
+                if item.cleans:
+                    # 付箋等の除去・A4 にそろえる（4.15・4.16）は、スタンプより前に行う。
+                    clean_pdf(current, cleaned, item.fit_a4, item.strip_hidden)
+                    current = cleaned
+                if item.stamps:
+                    assert effective_stamp_config is not None
+                    stamp_pdf_pages(current, stamped, item.stamps, effective_stamp_config)
+                    current = stamped
+                if item.strip_metadata:
+                    strip_metadata(current, dest, "PDF")
+                else:
+                    shutil.copyfile(current, dest)
+            finally:
+                built.unlink(missing_ok=True)
+                stamped.unlink(missing_ok=True)
+                cleaned.unlink(missing_ok=True)
+            _compress_pdf_in_place(item, dest)
+            written.append(dest)
+            continue
+
+        source_path = item.rebuild_from or item.record.path
+
+        # 付箋等の除去・A4 にそろえる（4.15・4.16）：スタンプより前に行う（縮めるとスタンプも
+        # 小さくなるため）。枝番ファイル結合は、ページの表から作る（ui/workspace.py）。
+        clean_tmp: Path | None = None
+        if item.cleans and item.merge_group is None and item.record.detected_format == "PDF":
+            clean_tmp = dest.with_name(dest.name + ".clean_tmp")
+            clean_pdf(source_path, clean_tmp, item.fit_a4, item.strip_hidden)
+            source_path = clean_tmp
+
+        # 画像のファイル（JPEG・PNG）を軽くする（②）のは、スタンプより前に行う（スタンプは
+        # 画素に焼き込むので、後で縮めると字が小さく粗くなる）。
+        reduce_tmp: Path | None = None
+        if item.reduce_dpi is not None and item.merge_group is None and item.record.detected_format in ("JPEG", "PNG"):
+            reduce_tmp = dest.with_name(dest.name + ".reduce_tmp")
+            reduce_image_file(
+                source_path, reduce_tmp, item.record.detected_format, item.reduce_dpi, item.jpeg_quality
             )
-            if mismatch_pages:
-                rotate_tmp = dest.with_name(dest.name + ".rotate_tmp")
-                rotate_pdf_pages(
-                    item.record.path, rotate_tmp, mismatch_pages, item.rotate_degrees
-                )
-                source_path = rotate_tmp
+            source_path = reduce_tmp
 
         try:
             if item.merge_group is not None:
@@ -326,8 +406,11 @@ def copy_to_output(
                 strip_metadata(source_path, dest, item.record.detected_format)
             else:
                 shutil.copy2(source_path, dest)
+            _compress_pdf_in_place(item, dest)
         finally:
-            if rotate_tmp is not None:
-                rotate_tmp.unlink(missing_ok=True)
+            if clean_tmp is not None:
+                clean_tmp.unlink(missing_ok=True)
+            if reduce_tmp is not None:
+                reduce_tmp.unlink(missing_ok=True)
         written.append(dest)
     return written

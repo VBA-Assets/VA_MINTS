@@ -106,6 +106,21 @@ class PiiDetectionConfig:
 
 
 @dataclass(frozen=True)
+class CompressConfig:
+    """圧縮（要件定義書 4.13。Ver300）。一次資料に定めはなく、いずれも実装上の値。
+
+    auto_lossless_mb：この大きさ（MB）以上の PDF には、読み込んだときに①画質を
+    損なわない圧縮のチェックを自動で付ける。
+    reduce_dpi：②画像を軽くするときに選べる解像度（dpi）。先頭が既定。
+    jpeg_quality：②で画像を JPEG にするときの画質（1〜95）。
+    """
+
+    auto_lossless_mb: float = 10
+    reduce_dpi: tuple[int, ...] = (300, 200, 150)
+    jpeg_quality: int = 80
+
+
+@dataclass(frozen=True)
 class Config:
     upload: UploadConfig
     filename: FilenameConfig
@@ -114,6 +129,8 @@ class Config:
     evidence_stamp: EvidenceStampConfig
     pii_detection: PiiDetectionConfig
     logging: LoggingConfig
+    # Ver300 で足した。古い config.yaml（compress セクションのないもの）でも動くよう、既定を持つ。
+    compress: CompressConfig = CompressConfig()
 
 
 _REQUIRED_SECTIONS = (
@@ -259,6 +276,39 @@ def _validate(raw: object) -> None:
                 f"（{exc}）。パターンを修正するか、この行を削除してください。"
             ) from exc
 
+    compress = raw.get("compress")
+    if compress is not None:
+        if not isinstance(compress, dict):
+            raise ValueError(
+                "config.yaml: compress セクションの形式が正しくありません。"
+                "配布時のconfig.yamlを参考に復元してください。"
+            )
+        if "auto_lossless_mb" in compress and _require_number(compress, "compress", "auto_lossless_mb") < 0:
+            raise ValueError("config.yaml: compress.auto_lossless_mb は0以上である必要があります")
+        if "reduce_dpi" in compress:
+            values = compress["reduce_dpi"]
+            if (
+                not isinstance(values, (list, tuple))
+                or not values
+                or not all(isinstance(v, int) and not isinstance(v, bool) and 50 <= v <= 600 for v in values)
+            ):
+                raise ValueError(
+                    "config.yaml: compress.reduce_dpi は50〜600の整数のリスト（例：[200, 150]）"
+                    f"である必要があります（指定値：{values!r}）"
+                )
+        if "jpeg_quality" in compress and not (1 <= _require_int(compress, "compress", "jpeg_quality") <= 95):
+            raise ValueError("config.yaml: compress.jpeg_quality は1〜95の整数である必要があります")
+
+
+def _compress_config(raw: dict) -> CompressConfig:
+    section = raw.get("compress") or {}
+    default = CompressConfig()
+    return CompressConfig(
+        auto_lossless_mb=section.get("auto_lossless_mb", default.auto_lossless_mb),
+        reduce_dpi=tuple(section.get("reduce_dpi", default.reduce_dpi)),
+        jpeg_quality=section.get("jpeg_quality", default.jpeg_quality),
+    )
+
 
 def load_config(path: Path | None = None) -> Config:
     """config.yaml を読み込み、型付きの Config オブジェクトを返す。
@@ -317,4 +367,5 @@ def load_config(path: Path | None = None) -> Config:
             log_dir=raw["logging"]["log_dir"],
             level=raw["logging"]["level"],
         ),
+        compress=_compress_config(raw),
     )

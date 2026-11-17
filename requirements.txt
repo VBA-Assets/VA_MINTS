@@ -15,13 +15,23 @@ reportlab>=4.0
 # 画像処理・Exif読み取り
 Pillow>=10.0
 
-# 音声・動画タグ読み取り（ffmpeg不要の純Python実装）
-mutagen>=1.47
+# PDF：プレビュー（ページを画像にする）・隠した所の下の文字の検査。Google の PDFium（Apache・BSD）
+pypdfium2>=4.0
+
+# 音声・動画のタグは、ライブラリを使わず自前で読む（src/mints_prep/detectors/av_tags.py）。
+# Ver201 まで使っていた mutagen は、ライセンス（GPL-2.0-or-later）が VA mints の MIT License と
+# 合わないので、2026-11-17 に外した（班長決定）。配るものに入る部品は、MIT License と両立する
+# もの（MIT・BSD・Apache・MPL など）だけにすること。部品を足したら scripts\make_notices.py にも足す。
 
 # Office文書プロパティ読み取り（変換自体はv2以降。メタデータ検出のみv1で使用）
 python-docx>=1.1
 openpyxl>=3.1
 python-pptx>=0.6.23
+
+# エクスプローラーからのドラッグアンドドロップ（Ver300。左の一覧へのファイルの追加）。
+# 中の tkdnd（DLL）が使うのは kernel32・shell32・user32・ole32 だけで、通信の機能はない
+# （2026-11-17 に確かめた）。MIT License（tkdnd は BSD 系）。
+tkinterdnd2>=0.7.0
 
 # 設定ファイル読み込み
 PyYAML>=6.0

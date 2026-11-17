@@ -26,23 +26,15 @@ import pikepdf
 
 from mints_prep.config import PdfConfig
 from mints_prep.models import PdfFinding
+from mints_prep.processors.pdf_cleanup import inspect_hidden_content, judge_size
 
 _PT_TO_MM = 25.4 / 72.0
 
 
 def _judge_size(width_mm: float, height_mm: float, config: PdfConfig) -> str:
-    """縦横どちらの向きでもA4/A3寸法と一致するかを、許容誤差付きで判定する。"""
-    tol = config.size_tolerance_mm
-    candidates = [
-        ("A4", config.a4_mm),
-        ("A3", config.a3_mm),
-    ]
-    dims = sorted([width_mm, height_mm])
-    for label, size in candidates:
-        target = sorted(size)
-        if abs(dims[0] - target[0]) <= tol and abs(dims[1] - target[1]) <= tol:
-            return label
-    return "非対応"
+    """縦横どちらの向きでもA4/A3寸法と一致するかを、許容誤差付きで判定する
+    （用紙を A4 にそろえる処理と同じ判定を使う。processors/pdf_cleanup.py）。"""
+    return judge_size(width_mm, height_mm, config)
 
 
 def _judge_orientation(width_mm: float, height_mm: float) -> str:
@@ -104,7 +96,12 @@ def detect_pdf(path: Path, config: PdfConfig) -> PdfFinding:
             elif judgment == "A3" and orientation == "縦":
                 mismatch_pages.append(index)
 
+        # 付箋・コメント・添付ファイル・JavaScript（Ver300。要件定義書 4.16）。数えるだけ。
+        hidden = inspect_hidden_content(pdf)
         return PdfFinding(
+            hidden_comments=hidden.comments,
+            hidden_attachments=hidden.attachments,
+            has_javascript=hidden.javascript,
             has_password=has_password,
             has_permission_restriction=has_permission_restriction,
             page_sizes_mm=tuple(page_sizes_mm),

@@ -69,6 +69,30 @@ class RibbonGroup(ttk.Frame):
         self._stack += 1
         return b
 
+    def dropdown(self, text, items, icon=None, tip=None):
+        """小さいボタンの形の、押すとメニューが開くボタン（Word の［回転］と同じ）。items：
+        （メニューの字、実行）の並び。置き方は small と同じ。"""
+        import tkinter as tk
+
+        b = ttk.Menubutton(self.body, text=text, style="Ribbon.TMenubutton", takefocus=False,
+                           direction="below", **self._images(text, icon, False))
+        menu = tk.Menu(b, tearoff=False)
+        for label, command in items:
+            menu.add_command(label=label, command=command)
+        b.configure(menu=menu)
+        b.menu = menu
+        if tip:
+            b.tooltip = Tooltip(b, tip)
+        if self._stack >= ROWS:
+            self._next_column()
+        b.grid(row=self._stack, column=self._column, sticky="w", padx=1, pady=0)
+        self._stack += 1
+        return b
+
+    def new_column(self):
+        """次の小さいボタンを、新しい列の上から置く（3つ積む前に列を改めるとき）。"""
+        self._next_column()
+
     def block(self, widget):
         """部品（フォルダの欄など）を、新しい列の上から置く。"""
         self._next_column()

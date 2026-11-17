@@ -60,32 +60,13 @@ def test_plain_jpeg_not_flagged_as_metadata(tmp_path: Path):
 
 
 def test_unsupported_av_container_returns_none_not_no_metadata(tmp_path: Path):
-    """mutagenが解釈できないコンテナ（AVI等）を「メタデータなし」と誤報告
+    """読み方を持たないコンテナ（AVI等）を「メタデータなし」と誤報告
     しない回帰テスト：検出不可（None）を返し、呼び出し側が「検出未対応形式」
-    と注記する（iPhoneのMOV等、GPS内蔵が一般的な形式を無警告で通さない）。"""
+    と注記する（GPS内蔵が一般的な形式を無警告で通さない）。MP3・MP4 は test_av_tags.py。"""
     p = tmp_path / "video.avi"
     p.write_bytes(b"RIFF\x24\x00\x00\x00AVI LIST" + b"\x00" * 32)
     finding = detect_metadata(p)
     assert finding is None
-
-
-def test_mp3_id3_tags_detected_via_raw_tags(tmp_path: Path):
-    """MP3のID3タグが生タグAPI（easy=False）経由で検出されること
-    （EasyタグAPIのマッピング済みキー限定による見逃しの回帰テスト）。"""
-    from mutagen.id3 import ID3, TIT2
-
-    p = tmp_path / "audio.mp3"
-    # 有効なMPEG1 Layer3フレーム（128kbps・44.1kHz＝417バイト）×4＋ID3タグ
-    frame = b"\xff\xfb\x90\x64" + b"\x00" * 413
-    p.write_bytes(frame * 4)
-    tags = ID3()
-    tags.add(TIT2(encoding=3, text=["秘密のタイトル"]))
-    tags.save(p)
-
-    finding = detect_metadata(p)
-    assert finding is not None
-    assert finding.has_metadata is True
-    assert any("TIT2" in f for f in finding.detected_fields)
 
 
 def test_palette_png_transparency_not_flagged_as_metadata(tmp_path: Path):

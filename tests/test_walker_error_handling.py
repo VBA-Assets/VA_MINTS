@@ -21,7 +21,7 @@ def test_scan_folder_isolates_per_file_errors(tmp_path: Path, config, monkeypatc
 
     monkeypatch.setattr(walker_module, "scan_file", flaky_scan_file)
 
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
 
     assert len(result.records) == 2
     by_name = {r.path.name: r for r in result.records}

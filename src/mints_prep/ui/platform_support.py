@@ -35,6 +35,72 @@ def mousewheel_units(widget: tk.Misc, delta: int, windows_units: int) -> int:
     return windows_units
 
 
+def clipboard_files() -> list[Path]:
+    """エクスプローラーでコピーしたファイル（クリップボードの CF_HDROP）の位置。Windows 以外や、
+    ファイルがコピーされていないときは空（Ver300。左の一覧への貼り付け）。
+
+    Tk のクリップボードは文字しか扱えないため、Windows の API で読む。読むだけで、
+    クリップボードの中身は変えない。
+    """
+    if os.name != "nt":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    cf_hdrop = 15
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    user32.OpenClipboard.argtypes = [wintypes.HWND]
+    user32.OpenClipboard.restype = wintypes.BOOL
+    user32.CloseClipboard.restype = wintypes.BOOL
+    user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+    user32.GetClipboardData.argtypes = [wintypes.UINT]
+    user32.GetClipboardData.restype = wintypes.HANDLE
+    shell32.DragQueryFileW.argtypes = [wintypes.HANDLE, wintypes.UINT, wintypes.LPWSTR, wintypes.UINT]
+    shell32.DragQueryFileW.restype = wintypes.UINT
+
+    if not user32.IsClipboardFormatAvailable(cf_hdrop):
+        return []
+    if not user32.OpenClipboard(None):
+        return []
+    try:
+        handle = user32.GetClipboardData(cf_hdrop)
+        if not handle:
+            return []
+        count = shell32.DragQueryFileW(handle, 0xFFFFFFFF, None, 0)
+        paths: list[Path] = []
+        for i in range(count):
+            length = shell32.DragQueryFileW(handle, i, None, 0)
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            shell32.DragQueryFileW(handle, i, buffer, length + 1)
+            paths.append(Path(buffer.value))
+        return paths
+    finally:
+        user32.CloseClipboard()
+
+
+def enable_file_drop(widget: tk.Misc, on_drop) -> bool:
+    """エクスプローラーからのファイルのドラッグアンドドロップを、widget で受ける（Ver300）。
+    on_drop にはドロップされたものの位置の並びを渡す。使えないとき（tkinterdnd2 がない等）は
+    False（ドロップできないだけで、ほかの操作はできる）。
+
+    tkinterdnd2（MIT License。中の tkdnd は BSD 系）を使う。ドロップを受け取るだけで、
+    通信はしない（DLL が使うのは kernel32・shell32・user32・ole32 だけ。2026-11-17 に確かめた）。
+    """
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+
+    TkinterDnD._require(widget.winfo_toplevel())
+
+    def _drop(event) -> str:
+        on_drop([Path(p) for p in widget.tk.splitlist(event.data)])
+        return event.action
+
+    widget.drop_target_register(DND_FILES)
+    widget.dnd_bind("<<Drop>>", _drop)
+    return True
+
+
 def open_folder(path: Path | str) -> None:
     """ユーザーが選んだローカルのフォルダを、OSのファイル管理画面で開く。
 

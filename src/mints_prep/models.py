@@ -65,6 +65,20 @@ class PdfFinding:
     page_size_judgments: tuple[str, ...] = ()  # "A4" / "A3" / "非対応"（ページ単位）
     page_orientations: tuple[str, ...] = ()  # "縦" / "横"（ページ単位）
     orientation_mismatch_pages: tuple[int, ...] = ()  # 内容の向きとページ設定が食い違う疑いのあるページ（1始まり）
+    # 付箋・コメント・添付ファイル・JavaScript（Ver300。要件定義書 4.16。processors/pdf_cleanup.py）。
+    # comments：取り除く付箋と、コメントの文・作成者名を外す注釈の数。attachments：添付ファイルの数。
+    hidden_comments: int = 0
+    hidden_attachments: int = 0
+    has_javascript: bool = False
+
+    @property
+    def non_a4a3_pages(self) -> tuple[int, ...]:
+        """A4・A3 以外の大きさのページ（1始まり）。"""
+        return tuple(i for i, j in enumerate(self.page_size_judgments, start=1) if j == "非対応")
+
+    @property
+    def has_hidden_content(self) -> bool:
+        return bool(self.hidden_comments or self.hidden_attachments or self.has_javascript)
 
 
 @dataclass
@@ -183,7 +197,6 @@ class ScanResult:
     """フォルダ単位のスキャン結果一式。"""
 
     root: Path
-    include_subfolders: bool
     records: list[FileRecord] = field(default_factory=list)
 
     def by_classification(self, classification: Classification) -> list[FileRecord]:

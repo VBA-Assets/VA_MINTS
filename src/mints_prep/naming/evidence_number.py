@@ -174,3 +174,23 @@ def check_evidence_sequence(
                 )
             )
     return tuple(findings)
+
+
+# ---------------------------------------------------------------------- 枝番の区切り（Ver300）
+def name_with_evidence(name: str, label: str, config: EvidenceNumberConfig) -> str:
+    """ファイル名 name の先頭の証拠番号を label（例：「甲005」「甲005-2」「甲005-1~3」）に
+    置き換えた名前。証拠番号がなければ先頭に足す（標目との間は半角空白）。label が空なら、
+    先頭の証拠番号と、その後の区切りを取り除く。区切り文字と標目は、元のまま残す
+    （4.3節。利用者の表記を変えない）。"""
+    path = Path(name)
+    stem, suffix = path.stem, path.suffix
+    match = match_evidence_number(name, config)
+    if match is None:
+        title, separator = stem, " "
+    else:
+        title, separator = match.title, match.title_separator or " "
+    if not label:
+        return f"{title}{suffix}"
+    if not title:
+        return f"{label}{suffix}"
+    return f"{label}{separator}{title}{suffix}"

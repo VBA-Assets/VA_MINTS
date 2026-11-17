@@ -73,12 +73,16 @@ def render_preview(
     max_width: int = 420,
     max_height: int = 560,
     rotate_degrees: int = 0,
+    resolution: int = 150,
 ) -> Image.Image | None:
     """プレビュー画像（PIL Image）を生成する。プレビュー不可の場合はNoneを返す。
 
+    resolution：PDFを画像にするときの解像度（dpi）。ページの縮小画像（Ver300）では
+    低くして速くする。
+
     page_index：表示するページ（0始まり）。PDFの全ページを確認できるように
     する（画像等、ページの概念がない形式では無視される）。
-    rotate_degrees：向き補正（4.6）のプレビュー用の回転角（時計回り・90の倍数）。
+    rotate_degrees：ページの回転（4.10）のプレビュー用の回転角（時計回り・90の倍数）。
     /Rotate属性による回転と同じ見た目になる。
     プレビュー不可となるケース：パスワード付きPDF（復号キーがないと開けない）、
     PDF/JPEG/PNG以外の形式（MP3/MP4等。ページの概念がなく視覚的プレビューが
@@ -93,7 +97,7 @@ def render_preview(
             with pdfplumber.open(record.path) as pdf:
                 if not (0 <= page_index < len(pdf.pages)):
                     return None
-                image = pdf.pages[page_index].to_image(resolution=150).original
+                image = pdf.pages[page_index].to_image(resolution=resolution).original
         elif record.detected_format in _IMAGE_FORMATS:
             with Image.open(record.path) as opened:
                 image = opened.copy()
@@ -118,8 +122,13 @@ def render_preview_with_stamp(
     max_width: int = 420,
     max_height: int = 560,
     rotate_degrees: int = 0,
+    only_first_page: bool = True,
 ) -> Image.Image | None:
     """証拠番号スタンプを実際に焼き込んだ場合の見た目でプレビュー画像を生成する。
+
+    only_first_page：True なら、PDFの1ページ目（page_index == 0）にだけ押した見た目に
+    する。ページの表を使う画面（Ver300）は、表の1ページ目がファイルの何ページ目かが
+    変わるので False を渡し、押すかどうかを呼び出し側で決める。
 
     render_preview と同じくプレビュー不可の場合はNoneを返す。実際のスタンプ
     処理（evidence_stamp.stamp_pdf/stamp_image）をそのまま一時ファイルへ適用
@@ -132,7 +141,7 @@ def render_preview_with_stamp(
     """
     if record.pdf_finding is not None and record.pdf_finding.has_password:
         return None
-    if record.detected_format == "PDF" and page_index != 0:
+    if record.detected_format == "PDF" and page_index != 0 and only_first_page:
         return render_preview(record, page_index, max_width, max_height, rotate_degrees)
 
     try:
@@ -146,7 +155,7 @@ def render_preview_with_stamp(
                 writer = PdfWriter()
                 writer.add_page(reader.pages[page_index])
                 if rotate_degrees % 360:
-                    # 向き補正（4.6）のプレビュー：書き出しと同じく、回転を
+                    # 回したページのプレビュー：書き出しと同じく、回転を
                     # 適用してからスタンプする（スタンプは回転後の右上に載る）。
                     writer.pages[0].rotate(rotate_degrees)
                 with open(first_page_path, "wb") as f:

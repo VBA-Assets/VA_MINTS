@@ -86,7 +86,7 @@ def test_diagnostic_text_has_no_file_names(tmp_path):
             app._errors.record(exc, "書き出し")
         text = app._diagnostic_text()
         assert __version__ in text and "PermissionError" in text
-        assert "入力フォルダの欄：設定あり（フォルダがある）" in text
+        assert "対象フォルダの欄：設定あり（フォルダがある）" in text
         assert "秘密" not in text and "甲001" not in text                # 場所・ファイル名・本文は入らない
         assert str(tmp_path) not in text
     finally:

@@ -23,7 +23,7 @@ def test_scan_folder_classifies_all_files(tmp_path: Path, config):
     make_docx_with_metadata(tmp_path / "準備書面案.docx")  # C: 要変換
     make_unsupported_file(tmp_path / "圧縮ファイル.zip")  # D: 処理対象外
 
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
 
     assert len(result.records) == 5
     by_name = {r.path.name: r for r in result.records}
@@ -40,7 +40,7 @@ def test_scan_folder_does_not_modify_files(tmp_path: Path, config):
     before = p.stat().st_mtime_ns
     before_bytes = p.read_bytes()
 
-    scan_folder(tmp_path, config, include_subfolders=False)
+    scan_folder(tmp_path, config)
 
     assert p.stat().st_mtime_ns == before
     assert p.read_bytes() == before_bytes
@@ -48,7 +48,7 @@ def test_scan_folder_does_not_modify_files(tmp_path: Path, config):
 
 def test_scan_folder_flags_over_100_char_filename(tmp_path: Path, config):
     p = make_long_filename_pdf(tmp_path)
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
     record = next(r for r in result.records if r.path == p)
     assert record.filename_finding.exceeds_max_length
     assert record.classification == Classification.B_NEEDS_FIX
@@ -62,7 +62,7 @@ def test_scan_folder_flags_single_file_exceeding_200mb(tmp_path: Path, config):
     p = make_a4_pdf(tmp_path / "甲001 巨大ファイル.pdf")
     assert p.stat().st_size > tiny_upload.max_total_bytes  # 前提の確認
 
-    result = scan_folder(tmp_path, tiny_config, include_subfolders=False)
+    result = scan_folder(tmp_path, tiny_config)
 
     record = result.records[0]
     assert record.exceeds_single_file_limit is True
@@ -75,7 +75,7 @@ def test_scan_folder_does_not_flag_file_within_limit(tmp_path: Path, config):
     p = make_a4_pdf_no_metadata(tmp_path / "甲001 通常サイズ.pdf")
     assert p.stat().st_size < config.upload.max_total_bytes
 
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
 
     record = result.records[0]
     assert record.exceeds_single_file_limit is False
@@ -84,7 +84,7 @@ def test_scan_folder_does_not_flag_file_within_limit(tmp_path: Path, config):
 
 def test_scan_folder_flags_permission_restricted_pdf(tmp_path: Path, config):
     make_permission_restricted_pdf(tmp_path / "登記情報.pdf")
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
     record = result.records[0]
     assert record.pdf_finding.has_permission_restriction is True
     assert record.pdf_finding.has_password is False
@@ -93,7 +93,7 @@ def test_scan_folder_flags_permission_restricted_pdf(tmp_path: Path, config):
 
 def test_scan_folder_flags_pii_in_pdf_text(tmp_path: Path, config):
     make_pdf_with_text(tmp_path / "甲001 陳述書.pdf", ["連絡先 090-1234-5678"])
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
     record = result.records[0]
     assert record.pii_finding.has_pii is True
     assert "電話番号" in record.pii_finding.detected_categories
@@ -102,7 +102,7 @@ def test_scan_folder_flags_pii_in_pdf_text(tmp_path: Path, config):
 
 def test_scan_folder_flags_pii_in_filename(tmp_path: Path, config):
     make_a4_pdf_no_metadata(tmp_path / "報告書_taro.tanaka@example.com.pdf")
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
     record = result.records[0]
     assert record.pii_finding.has_pii is True
     assert "メールアドレス" in record.pii_finding.detected_categories
@@ -110,23 +110,25 @@ def test_scan_folder_flags_pii_in_filename(tmp_path: Path, config):
 
 def test_scan_folder_no_pii_stays_compliant(tmp_path: Path, config):
     make_a4_pdf_no_metadata(tmp_path / "甲001 通常書証.pdf")
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
     record = result.records[0]
     assert record.pii_finding.has_pii is False
     assert record.classification == Classification.A_COMPLIANT
 
 
-def test_scan_folder_subfolder_option(tmp_path: Path, config):
+def test_scan_folder_reads_only_top_level_and_batch_folders(tmp_path: Path, config):
+    """読み込むのは直下と「提出用_NN」の中だけ（Ver300。サブフォルダを含める設定は外した）。"""
     sub = tmp_path / "サブフォルダ"
     sub.mkdir()
+    batch = tmp_path / "提出用_01"
+    batch.mkdir()
     make_a4_pdf(tmp_path / "root.pdf")
     make_a4_pdf(sub / "nested.pdf")
+    make_a4_pdf(batch / "batched.pdf")
 
-    shallow = scan_folder(tmp_path, config, include_subfolders=False)
-    deep = scan_folder(tmp_path, config, include_subfolders=True)
+    result = scan_folder(tmp_path, config)
 
-    assert len(shallow.records) == 1
-    assert len(deep.records) == 2
+    assert [r.path.name for r in result.records] == ["batched.pdf", "root.pdf"]
 
 
 def test_scan_folder_skips_system_and_temp_files(tmp_path: Path, config):
@@ -139,7 +141,7 @@ def test_scan_folder_skips_system_and_temp_files(tmp_path: Path, config):
     (tmp_path / "~$報告書.docx").write_bytes(b"\x00lockfile")
     (tmp_path / "作業中.tmp").write_bytes(b"temp")
 
-    result = scan_folder(tmp_path, config, include_subfolders=False)
+    result = scan_folder(tmp_path, config)
 
     names = [r.path.name for r in result.records]
     assert names == ["甲001 通常ファイル.pdf"]
