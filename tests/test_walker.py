@@ -145,3 +145,27 @@ def test_scan_folder_skips_system_and_temp_files(tmp_path: Path, config):
 
     names = [r.path.name for r in result.records]
     assert names == ["甲001 通常ファイル.pdf"]
+
+
+def test_scan_folder_lists_evidence_in_symbol_order(tmp_path: Path, config):
+    """一覧は、証拠番号の順（甲・乙・丙、添字、番号、枝番）、その後に証拠番号のないファイル（2026-11-18
+    班長の報告。名前の文字の順では、丙・乙・甲の順になり、書面がその間に入っていた）。"""
+    names = [
+        "丙001 陳述書.pdf", "乙A001 領収書.pdf", "乙001 契約書.pdf", "甲010 写真.pdf", "甲002-2 領収書.pdf",
+        "甲002-1 領収書.pdf", "甲001 契約書.pdf", "準備書面（1）.pdf", "README.pdf",
+    ]
+    for name in names:
+        make_a4_pdf(tmp_path / name)
+    batch = tmp_path / "提出用_01"
+    batch.mkdir()
+    make_a4_pdf(batch / "乙002 写真.pdf")
+    make_a4_pdf(batch / "甲003 写真.pdf")
+
+    result = scan_folder(tmp_path, config)
+
+    assert [r.path.name for r in result.records] == [
+        "甲003 写真.pdf", "乙002 写真.pdf",  # 「提出用_NN」の中が先（その中も同じ並び）
+        "甲001 契約書.pdf", "甲002-1 領収書.pdf", "甲002-2 領収書.pdf", "甲010 写真.pdf",
+        "乙001 契約書.pdf", "乙A001 領収書.pdf", "丙001 陳述書.pdf",
+        "README.pdf", "準備書面（1）.pdf",
+    ]

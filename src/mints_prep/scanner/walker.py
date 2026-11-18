@@ -24,6 +24,7 @@ from mints_prep.detectors.pii_detector import (
 )
 from mints_prep.detectors.redaction_detector import detect_redaction_residue
 from mints_prep.detectors.size_detector import get_size_bytes
+from mints_prep.naming.evidence_number import evidence_sort_key, match_evidence_number
 from mints_prep.models import (
     Classification,
     FileRecord,
@@ -53,13 +54,14 @@ def is_system_file(path: Path) -> bool:
     )
 
 
-def _iter_files(root: Path):
+def _iter_files(root: Path, config: Config):
     """読み込むファイルを列挙する。
 
     読み込むのは、対象フォルダの直下のファイルと、直下の「提出用_NN」フォルダ
     （200MB分割で本ツールが仕分けた先。更新の後に読み込み直したとき、仕分けたファイルが
     一覧から消えないように）の中のファイル。並びは、提出用_01、提出用_02 …、その後に
     直下のファイル。「元のファイル」フォルダ（更新前のファイルの控え・更新記録）は読まない。
+    それぞれの中の並びは _order_key（証拠番号の順〔甲・乙・丙〕、その後に証拠番号のないファイル）。
 
     ほかのサブフォルダの中は読まない（証拠説明書の入力を置く「証拠説明書データ」フォルダも読まない。
     証拠説明書の PDF は直下にある。4.17）（Ver300。2026-11-17 班長指示で「サブフォルダ内の
@@ -76,9 +78,24 @@ def _iter_files(root: Path):
         (d for d in root.iterdir() if d.is_dir() and is_batch_dir_name(d.name)),
         key=lambda d: d.name,
     )
+    def _ordered(paths):
+        return sorted((p for p in paths if _wanted(p)), key=lambda p: _order_key(p, config))
+
     for d in batch_dirs:
-        yield from (p for p in sorted(d.rglob("*")) if _wanted(p))
-    yield from (p for p in root.iterdir() if _wanted(p))
+        yield from _ordered(d.rglob("*"))
+    yield from _ordered(root.iterdir())
+
+
+def _order_key(path: Path, config: Config) -> tuple:
+    """一覧の並び（2026-11-18 班長の報告「甲、乙、丙の順番になっていない」）：先に、ファイル名の先頭に
+    証拠番号のあるファイルを、証拠番号の順（符号は config の順〔甲・乙・丙〕、添字、番号、枝番）に並べ、
+    その後に、証拠番号のないファイル（書面など）を名前の順に並べる。それまでは名前の文字の順
+    （Windows の並び。文字の番号では 丙＜乙＜甲 なので、丙・乙・甲の順になり、書面もその間に入った）。
+    同じ証拠番号のファイルは、名前の順。証拠説明書の PDF は、ui/workspace.py がいちばん上に出す。"""
+    match = match_evidence_number(path.name, config.evidence_number)
+    if match is None:
+        return (1, (), path.name)
+    return (0, evidence_sort_key(match, config.evidence_number), path.name)
 
 
 def scan_file(path: Path, config: Config) -> FileRecord:
@@ -213,7 +230,7 @@ def _error_record(path: Path, exc: Exception, config: Config) -> FileRecord:
 def scan_folder(root: Path, config: Config) -> ScanResult:
     """フォルダ内全ファイルをスキャンし、ScanResult を返す。"""
     records: list[FileRecord] = []
-    for p in _iter_files(root):
+    for p in _iter_files(root, config):
         try:
             records.append(scan_file(p, config))
         except Exception as exc:  # noqa: BLE001 - 個別ファイルの想定外エラーを隔離する

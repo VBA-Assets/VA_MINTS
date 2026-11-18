@@ -17,8 +17,8 @@ def _window(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))  # 本物の設定ファイルを汚さない
     try:
         return MainWindow()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
+    except tk.TclError as exc:
+        pytest.skip(f"画面がない環境（{exc}）")
 
 
 def _load(app, folder: Path) -> None:
