@@ -46,6 +46,7 @@ from mints_prep.config import Config, EvidenceStampConfig, load_config
 from mints_prep.models import Classification, FileRecord, ScanResult
 from mints_prep.processors.compress import compressed_size
 from mints_prep.processors.report_writer import format_evidence_sequence_warnings
+from mints_prep.processors.evidence_description import rekey_after_restore
 from mints_prep.processors.updater import (
     BACKUP_DIRNAME,
     Manifest,
@@ -59,6 +60,8 @@ from mints_prep.processors.updater import (
 from mints_prep.scanner.walker import scan_folder
 from mints_prep.ui import platform_support, theme
 from mints_prep.ui.background import BackgroundJobs
+from mints_prep.ui.description_form import DescriptionFormMixin
+from mints_prep.ui.description_sync import DescriptionSyncMixin
 from mints_prep.ui.formatting import describe_expected_processing
 from mints_prep.ui.icons import IconSet
 from mints_prep.ui.preview import (
@@ -90,6 +93,7 @@ from mints_prep.ui.workspace import (
     describe_update_plan,
     format_skipped,
     unstamped_image_line,
+    update_result_path,
 )
 
 _CLASSIFICATION_TAGS = {
@@ -212,7 +216,7 @@ def _format_size(size_bytes: int) -> str:
     return f"{max(1, round(size_bytes / 1024))}KB"
 
 
-class MainWindow(tk.Tk):
+class MainWindow(DescriptionFormMixin, DescriptionSyncMixin, tk.Tk):
     def __init__(self, config: Config | None = None) -> None:
         super().__init__()
         # config.yaml の設定（配布物の既定）と、［ファイル］→［オプション］で利用者が変えた
@@ -260,6 +264,8 @@ class MainWindow(tk.Tk):
         # 更新・復元の後の読み込み直しで、選び直すファイル（左ペインの名前）。
         self._reselect_name: str | None = None
 
+        # 証拠説明書（4.17。ui/description_form.py・ui/description_sync.py）。
+        self._init_description_sync()
         self._build_menu()
         self._build_widgets()
         self._sync_page_buttons()
@@ -270,6 +276,8 @@ class MainWindow(tk.Tk):
         self.bind("<Control-Y>", self._on_key_redo)
         self.bind("<Delete>", self._on_key_delete)
         self.bind("<F2>", self._begin_rename)
+        # F5：証拠説明書の入力をすぐ保存し、PDF・一覧・プレビューを最新にする（4.17。2026-11-18 班長指示）。
+        self.bind("<F5>", self._on_key_f5)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         # 大きさは、メニューを作った後に決める（先に決めると、Tk がメニューの高さの分だけ
         # 縮めてしまい、閉じて開くたびに小さくなる）。
@@ -603,6 +611,9 @@ class MainWindow(tk.Tk):
         records = self._selected_records()
         if ws is None or not records:
             return
+        if len(records) == 1 and ws.is_description_file(records[0]):
+            self._delete_description()  # 証拠説明書は、フォルダごとごみ箱へ（4.17）
+            return
         rows = list(self._tree.get_children())
         chosen = {i for i in self._tree.selection() if i in rows}
         last = max((rows.index(i) for i in chosen), default=-1)
@@ -715,6 +726,7 @@ class MainWindow(tk.Tk):
     def _after_history(self, path: Path | None) -> None:
         if path is None:
             return
+        self._request_description_sync()  # 名前の変更を戻したときなど（4.17）
         # 分割・削除・追加を戻す・やり直すと、一覧の行が増減する
         self._refresh_tree_marks()
         visible = set(self._tree.get_children())
@@ -982,6 +994,7 @@ class MainWindow(tk.Tk):
         return "break"
 
     def _after_rename(self) -> None:
+        self._request_description_sync()  # 号証・標目が変わる（4.17。証拠説明書の PDF を作り直す）
         self._refresh_tree_marks()
         self._rebuild_options()
         self._refresh_strip()
@@ -1034,6 +1047,7 @@ class MainWindow(tk.Tk):
         )
 
     def _on_close(self) -> None:
+        self._flush_description_inputs()
         if self._confirm_discard_edits("閉じる"):
             self._save_window()
             self.destroy()
@@ -1386,11 +1400,22 @@ class MainWindow(tk.Tk):
                 self._page_buttons[key] = g.small(labels.get(key, label), command, tip=tips[key])
         self._page_menu = tk.Menu(self, tearoff=False)
         self._add_page_commands(self._page_menu)
+        # ---- 「証拠説明書」の組（4.17。2026-11-18）：押すたびに、証拠説明書の画面に入る・出る。
+        g = rb.group("証拠説明書")
+        self._desc_button = g.large(
+            # ボタンの名前は、組の名前と同じにしない（2026-11-18 班長指示「作成」）。
+            "作成", self._create_description,
+            tip="このフォルダの証拠説明書（PDFとデータ）を作ります。PDFは対象フォルダに作り、左の一覧の"
+                "いちばん上に出します。作った後は、右のペインのふだんの項目の下に、選んだ証拠の入力欄が出ます"
+                "（入力を変えるたびにPDFを作り直します。F5キーで、すぐに最新にできます）。"
+                "まだ作っていないフォルダでだけ押せます。",
+        )
 
         # ファイルを読み込むまでは、更新は押せない（グレーアウト。2026-11-13 班長指示）。
         # ［元のファイルに戻す］は、対象フォルダに更新の記録があるときだけ押せる。
         self._update_button.state(["disabled"])
         self._restore_button.state(["disabled"])
+        self._desc_button.state(["disabled"])
 
         # ステータス行：画面の最下部に、見出しなしで配置する。フラットデザイン
         # 方針のため立体的な枠線は使わず、上側に細い区切り線を1本引くだけとする。
@@ -1499,6 +1524,8 @@ class MainWindow(tk.Tk):
         self._preview_label.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=(8, 2))
         self._preview_label.bind("<Configure>", self._on_preview_resize)
         self._preview_label.bind("<MouseWheel>", self._on_page_wheel)
+        # 証拠説明書の PDF の行をクリックすると、右のペインをその行の入力欄まで送る（4.17。ui/description_form.py）。
+        self._preview_label.bind("<Button-1>", self._on_description_preview_click)
         self._update_page_nav()
 
     def _build_options_pane(self, parent: ttk.Frame) -> None:
@@ -1517,6 +1544,8 @@ class MainWindow(tk.Tk):
             self._apply_wraplength()
 
         canvas.bind("<Configure>", _on_canvas_resize)
+        # ペインの余白（中身の下の空いた所）の上でも送れるようにする。
+        canvas.bind("<MouseWheel>", lambda e: self._options_wheel(e))
         self._options_canvas = canvas
         self._options_frame = inner
         self._show_options_placeholder()
@@ -1530,18 +1559,34 @@ class MainWindow(tk.Tk):
             if w.winfo_exists():
                 w.configure(wraplength=wrap - getattr(w, "_indent", 0))
 
+    def _options_wheel(self, event: tk.Event) -> str:
+        """右ペインを、ホイールで送る。"""
+        first, last = self._options_canvas.yview()
+        if first <= 0.0 and last >= 1.0:
+            return "break"  # 全部見えているときは動かさない
+        self._options_canvas.yview_scroll(
+            platform_support.mousewheel_units(self, event.delta, -int(event.delta / 120) * 3), "units"
+        )
+        return "break"
+
+    def _text_wheel(self, event: tk.Event) -> str:
+        """複数行の欄（証拠説明書の立証趣旨など）の上のホイール：欄の中に隠れた行があり、その向きに
+        送れるときだけ欄の中を送り、そうでなければ右ペインを送る（2026-11-18。欄を一律に外していたため、
+        証拠説明書の画面では、マウスの下が欄のときに右ペインが動かなかった）。"""
+        widget = event.widget
+        units = platform_support.mousewheel_units(self, event.delta, -int(event.delta / 120) * 3)
+        first, last = widget.yview()
+        if (units < 0 and first > 0.0) or (units > 0 and last < 1.0):
+            widget.yview_scroll(units, "units")
+            return "break"
+        return self._options_wheel(event)
+
     def _bind_wheel(self, widget: tk.Misc) -> None:
         """右ペインの中のどこでホイールを回しても、右ペインがスクロールするようにする。"""
-        def _wheel(event: tk.Event) -> str:
-            first, last = self._options_canvas.yview()
-            if first <= 0.0 and last >= 1.0:
-                return "break"  # 全部見えているときは動かさない
-            self._options_canvas.yview_scroll(
-                platform_support.mousewheel_units(self, event.delta, -int(event.delta / 120) * 3), "units"
-            )
-            return "break"
-
-        widget.bind("<MouseWheel>", _wheel)
+        if widget.winfo_class() == "Text":
+            widget.bind("<MouseWheel>", self._text_wheel)
+        else:
+            widget.bind("<MouseWheel>", self._options_wheel)
         for child in widget.winfo_children():
             self._bind_wheel(child)
 
@@ -1591,6 +1636,7 @@ class MainWindow(tk.Tk):
         self._scan(input_dir)
 
     def _scan(self, input_dir: Path) -> None:
+        self._flush_description_inputs()
         self._scan_button.config(state=tk.DISABLED)
         # 読み込み直しの間は、更新も復元も押せなくする（結果が入れ替わる途中のため）。
         self._update_button.state(["disabled"])
@@ -1645,6 +1691,7 @@ class MainWindow(tk.Tk):
         self._strip.forget_images()  # 更新でファイルの中身が変わったので、縮小画像を描き直す
         self._populate_file_list(item)
         self._update_button.state(["!disabled"])
+        self._sync_description_button()  # まだ証拠説明書を作っていないフォルダだけで押せる
         self._restore_button.state(["!disabled"] if manifest else ["disabled"])
 
     # ------------------------------------------------------------------ 左ペイン
@@ -1675,7 +1722,8 @@ class MainWindow(tk.Tk):
 
     def _populate_file_list(self, result: ScanResult) -> None:
         select_iid = None
-        for record in result.records:
+        # 並びは、作業の状態の並び（証拠説明書の PDF をいちばん上に置いたもの。4.17）。
+        for record in (self._workspace.records if self._workspace is not None else result.records):
             name = display_name(record, result.root)
             iid = self._tree.insert(
                 "", "end", text=name, tags=(_CLASSIFICATION_TAGS[record.classification],)
@@ -1757,10 +1805,16 @@ class MainWindow(tk.Tk):
         self._reset_options_frame()
         if record is None or ws is None:
             self._build_process_items(None)
+            if self._description_active and ws is not None:
+                self._append_description_form()
             self._bind_wheel(self._options_frame)
             return
         frame = self._options_frame
 
+        if ws.is_description_file(record):
+            # このツールで作った証拠説明書（4.17）：頭書の欄を出す。処理の項目は出さない。
+            self._build_description_file_pane()
+            return
         self._wrap_label(record.path.name, font=("", 10, "bold")).pack(
             side=tk.TOP, anchor="w", pady=(0, 6)
         )
@@ -1873,6 +1927,10 @@ class MainWindow(tk.Tk):
             for note in notes:
                 self._wrap_label(f"・{note}", foreground=theme.NOTE).pack(side=tk.TOP, anchor="w")
 
+        if self._description_active:
+            # 証拠説明書を作ったフォルダでは、ふだんの項目の下に、いつも証拠説明書の入力欄を足す（4.17。
+            # 2026-11-18 班長指示）。
+            self._append_description_form()
         self._bind_wheel(frame)
 
     def _checkbutton(
@@ -2156,6 +2214,7 @@ class MainWindow(tk.Tk):
 
     def _show_preview_text(self, text: str) -> None:
         self._preview_photo = None
+        self._preview_shown = None
         self._preview_label.configure(image="", text=text)
 
     def _refresh_preview(self) -> None:
@@ -2231,7 +2290,11 @@ class MainWindow(tk.Tk):
             image = ImageOps.expand(image.convert("RGB"), border=1, fill=theme.BORDER)
             self._preview_photo = ImageTk.PhotoImage(image, master=self)
             self._preview_label.configure(image=self._preview_photo, text="")
+            # 証拠説明書の PDF の行をクリックしたとき（4.17）に、クリックした位置を PDF の上の位置に
+            # 直すため、描いた画像の大きさとページを覚えておく。
+            self._preview_shown = (Path(shown.path), page_index, image.size)
         else:
+            self._preview_shown = None
             self._show_preview_text(preview_placeholder_text(record))
 
     # ------------------------------------------------------------------ ファイルを更新
@@ -2245,6 +2308,7 @@ class MainWindow(tk.Tk):
             messagebox.showerror(APP_TITLE, f"対象フォルダが見つかりません：{root}")
             return
 
+        self._flush_description_inputs()  # 入れかけの証拠説明書の入力を、計画の前に保存する
         plan = ws.plan_update()
         if not plan.has_work:
             note = f"\n\n{unstamped_image_line(plan)}" if plan.unstamped_image_count else ""
@@ -2285,6 +2349,7 @@ class MainWindow(tk.Tk):
         total = len(plan.updates)
         changed = moved = 0
         aborted = False
+        results = []  # （更新、更新した後の位置）。証拠説明書の行を付け替えるため（4.17）
         try:
             manifest = Manifest.load(root)
             # ほかのファイルのページを使う計画（分割・挿入）のため、どれを更新するよりも前に、
@@ -2326,6 +2391,7 @@ class MainWindow(tk.Tk):
                         continue
                     aborted = True
                     break
+                results.append((update, update_result_path(update, outcome)))
                 if outcome is not None:
                     changed += 1 if outcome.changed or update.unstamp else 0
                     moved += 1 if outcome.moved else 0
@@ -2347,18 +2413,22 @@ class MainWindow(tk.Tk):
             except Exception as exc:  # noqa: BLE001 - 片付けの失敗で画面を止めない
                 self._errors.record(exc, "更新")
 
+        description_line = self._finish_description_update(ws, plan, results, ok=not (aborted or skipped))
         skip_block = format_skipped(skipped)
-        result_line = f"{changed} 件のファイルを更新しました。"
+        result_line = f"{changed} 件のファイルを更新しました。" if plan.has_file_work else ""
         if moved:
             result_line += f"（「提出用_NN」フォルダとの間で移したファイル：{moved} 件）"
+        if description_line:
+            result_line = f"{result_line}\n\n{description_line}" if result_line else description_line
         backup_line = (
             f"更新する前のファイルは「{BACKUP_DIRNAME}」フォルダにあります。"
             "［元のファイルに戻す］で元に戻せます。"
-        )
+        ) if plan.has_file_work else ""  # 証拠説明書だけを作ったときは、控えはない
         if aborted:
             self._status_label.config(text=f"更新を中止しました（{changed} 件を更新）")
             self._show_completion_dialog(
-                f"{changed} 件を更新した時点で中止しました。{skip_block}\n\n{backup_line}",
+                f"{changed} 件を更新した時点で中止しました。{skip_block}"
+                + (f"\n\n{description_line}" if description_line else "") + f"\n\n{backup_line}",
                 folder=root, warning=True,
             )
         elif len(plan.batches) >= 2:
@@ -2381,13 +2451,34 @@ class MainWindow(tk.Tk):
         else:
             self._status_label.config(text=f"更新完了（{changed} 件）")
             self._show_completion_dialog(
-                f"{result_line}{skip_block}\n\n{backup_line}",
+                f"{result_line}{skip_block}" + (f"\n\n{backup_line}" if backup_line else ""),
                 folder=root, warning=bool(skipped),
             )
 
         # 読み込み直す。済んだ処理は検出されなくなる（スタンプは更新記録で分かる）ので、
         # 済んだ項目のチェックは外れる。
         self._rescan()
+
+    def _finish_description_update(self, ws: Workspace, plan, results, ok: bool) -> str:
+        """更新の後の証拠説明書（4.17）：行を付け替え、PDF を作る。完了のお知らせに足す文を返す。
+
+        更新できなかったファイルがあるときは、号証・標目がファイルとそろわないおそれがあるので、
+        PDF は作らない（行の付け替えだけ行う）。"""
+        job = plan.description
+        if job is None:
+            return ""
+        try:
+            if not ok:
+                ws.rekey_description(results)
+                return (
+                    "証拠説明書は作りませんでした（更新できなかったファイルがあり、号証・標目が"
+                    "ファイルとそろわないおそれがあるため）。もう一度［ファイルを更新］を押すと作ります。"
+                )
+            path = ws.finish_description(job, results)
+        except Exception as exc:  # noqa: BLE001 - 証拠説明書の失敗で、ファイルの更新を止めない
+            self._errors.record(exc, "証拠説明書の作成")
+            return f"証拠説明書を作れませんでした：{describe_failure(job.target.name, exc)}"
+        return f"証拠説明書を作りました：「{path.parent.name}」フォルダの「{path.name}」"
 
     def _rescan(self) -> None:
         if self._scan_result is None:
@@ -2426,6 +2517,8 @@ class MainWindow(tk.Tk):
             return
         self._status_label.config(text="元のファイルに戻しています...")
         self.update_idletasks()
+        self._flush_description_inputs()
+        entries = list(Manifest.load(root).entries)  # 証拠説明書の行を、戻した後のファイルに付け替えるため
         try:
             result = restore_all(root)
         except Exception as exc:  # noqa: BLE001 - 失敗しても画面を操作可能なまま残す
@@ -2436,6 +2529,10 @@ class MainWindow(tk.Tk):
             )
             self._rescan()
             return
+        try:
+            rekey_after_restore(root, entries)
+        except Exception as exc:  # noqa: BLE001 - 付け替えられなくても、戻したことは変わらない
+            self._errors.record(exc, "証拠説明書の付け替え")
         if result.failures:
             shown = "\n".join(f"・{f}" for f in result.failures[:15])
             if len(result.failures) > 15:

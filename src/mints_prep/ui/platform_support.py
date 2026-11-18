@@ -113,3 +113,49 @@ def open_folder(path: Path | str) -> None:
         subprocess.Popen(["open", str(path)])  # noqa: S603,S607 - 同上
     else:
         subprocess.Popen(["xdg-open", str(path)])  # noqa: S603,S607 - 同上
+
+
+def send_to_recycle_bin(path: Path) -> None:
+    """ファイル・フォルダを、ごみ箱に移す（証拠説明書のフォルダを消すとき。4.17。ごみ箱から戻せる）。
+    Windows は、シェルの SHFileOperationW（元に戻せる削除）を使う。Mac は、ホームの .Trash へ移す
+    （なければ消す）。移せなければ OSError。"""
+    path = Path(path).resolve()
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND),
+                ("wFunc", wintypes.UINT),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+
+        FO_DELETE, FOF_SILENT, FOF_NOCONFIRMATION, FOF_ALLOWUNDO, FOF_NOERRORUI = 3, 0x4, 0x10, 0x40, 0x400
+        op = SHFILEOPSTRUCTW()
+        op.wFunc = FO_DELETE
+        op.pFrom = str(path) + "\0"  # 2つの終わりの印（文字列の終わりに、もう1つ付く）
+        op.fFlags = FOF_SILENT | FOF_NOCONFIRMATION | FOF_ALLOWUNDO | FOF_NOERRORUI
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+        if result != 0 or op.fAnyOperationsAborted or path.exists():
+            raise OSError(f"ごみ箱に移せませんでした（{result}）：{path.name}")
+        return
+    import shutil
+
+    trash = Path.home() / ".Trash"
+    if trash.is_dir():
+        target = trash / path.name
+        n = 1
+        while target.exists():
+            n += 1
+            target = trash / f"{path.name} {n}"
+        shutil.move(str(path), str(target))
+    elif path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()

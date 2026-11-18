@@ -80,6 +80,7 @@ from mints_prep.ui.review_logic import (
 )
 from mints_prep.ui.selection import Selection
 from mints_prep.ui.workspace_compress import CompressMixin
+from mints_prep.ui.workspace_description import DescriptionJob, DescriptionMixin
 from mints_prep.ui.workspace_files import FilesMixin
 from mints_prep.ui.workspace_join_split import JoinSplitMixin
 from mints_prep.ui.workspace_names import NamesMixin
@@ -152,6 +153,8 @@ class UpdatePlan:
     # 付箋・コメント・添付ファイルが残る PDF の数（取り除く項目があるのに、チェックが入って
     # いないもの。4.16）。自動ではチェックを付けないので、確認の画面に示す。
     hidden_remaining_count: int = 0
+    # 証拠説明書の PDF（4.17。入力を保存したことのあるフォルダだけ。作らないときは None）。
+    description: DescriptionJob | None = None
 
     @property
     def changed_count(self) -> int:
@@ -159,12 +162,17 @@ class UpdatePlan:
 
     @property
     def has_work(self) -> bool:
+        return self.has_file_work or self.description is not None
+
+    @property
+    def has_file_work(self) -> bool:
+        """証拠のファイルの更新（証拠説明書の PDF を除く）があるか。"""
         return bool(self.removals) or any(
             u.keys or u.moves or u.unstamp or u.added for u in self.updates
         )
 
 
-class Workspace(PagesMixin, NamesMixin, JoinSplitMixin, CompressMixin, FilesMixin):
+class Workspace(PagesMixin, NamesMixin, JoinSplitMixin, CompressMixin, FilesMixin, DescriptionMixin):
     """3ペインの画面の、選択の状態と更新の計画。
 
     役目ごとに、次のモジュールに分けてある（状態はすべて、この __init__ が持つ）：
@@ -173,6 +181,7 @@ class Workspace(PagesMixin, NamesMixin, JoinSplitMixin, CompressMixin, FilesMixi
     - workspace_join_split.py：ページの挿入・ファイルの結合・分割
     - workspace_compress.py：圧縮の選択・大きさの見込み
     - workspace_files.py：左の一覧のファイルの削除・追加
+    - workspace_description.py：証拠説明書の行・入力・PDF（4.17）
     このファイルには、処理の項目の既定・右ペイン・プレビュー・更新の計画を置く。
     """
 
@@ -181,7 +190,17 @@ class Workspace(PagesMixin, NamesMixin, JoinSplitMixin, CompressMixin, FilesMixi
         self.config = config
         self.records = list(scan_result.records)
         self.manifest = manifest if manifest is not None else Manifest()
-        self.eligible = select_eligible_records(self.records)
+        # 証拠説明書の入力（4.17。workspace_description.py。「証拠説明書データ」フォルダの 証拠説明書.json）。
+        # このツールで作った証拠説明書の PDF は、一覧で見るだけで、更新（スタンプ・仕分けなど）の
+        # 対象にしない（見分けるのに入力を使うので、先に読む）。
+        self._init_description()
+        # 証拠説明書の PDF は、一覧のいちばん上に置く（200MB で分けるときは「提出用_01」〔一覧の先頭〕に
+        # 入れるので、分けないときも先頭にそろえる。2026-11-18 班長指示）。
+        pdf = self.description_pdf()
+        self.records.sort(key=lambda r: r.path != pdf)  # 並びは、それ以外は変えない（安定な並べ替え）
+        self.eligible = [
+            r for r in select_eligible_records(self.records) if not self.is_description_file(r)
+        ]
         self._eligible_paths = {r.path for r in self.eligible}
         self.viewed: set[Path] = set()
         # スタンプのチェックを外したときのプレビュー用に作った、スタンプのない姿
@@ -825,6 +844,9 @@ class Workspace(PagesMixin, NamesMixin, JoinSplitMixin, CompressMixin, FilesMixi
                     looked = sources or (item.record.path,)
                     plan.unviewed_count += sum(1 for p in looked if p not in self.viewed)
         plan.counts = counts
+        plan.description = self.description_job(
+            plan.has_file_work, self.root / batches[0].folder_name if len(batches) > 1 else None
+        )
         plan.hidden_remaining_count = sum(
             1 for _item, sel in pairs
             if any(o.key == "strip_hidden" for o in sel.options)
@@ -918,9 +940,12 @@ def apply_update(
     return outcome
 
 
-def apply_all_updates(root: Path, plan: UpdatePlan, config: Config) -> None:
+def apply_all_updates(
+    root: Path, plan: UpdatePlan, config: Config, workspace: "Workspace | None" = None
+) -> None:
     """計画のすべてを、画面の［ファイルを更新］と同じ手順で行う（失敗したら、そこで止まる）。
-    画面を使わないとき（テスト）のためのもの。画面は、1件ずつ失敗を扱う（ui/app.py）。"""
+    画面を使わないとき（テスト）のためのもの。画面は、1件ずつ失敗を扱う（ui/app.py）。
+    workspace：計画を作ったもの（証拠説明書〔4.17〕を作るとき）。"""
     manifest = Manifest.load(root)
     prepared = isolate_shared_pages(root, [u.item for u in plan.updates])
     try:
@@ -928,11 +953,22 @@ def apply_all_updates(root: Path, plan: UpdatePlan, config: Config) -> None:
         # ページを、ほかのファイルに入れていても、写しから作れる）。
         for path in plan.removals:
             remove_file(root, path, manifest)
+        results = []
         for update, item in zip(plan.updates, prepared):
-            apply_update(root, update, item, manifest, config)
+            outcome = apply_update(root, update, item, manifest, config)
+            results.append((update, update_result_path(update, outcome)))
         save_choices(root, manifest)
     finally:
         discard_unused_materials(root, Manifest.load(root))
+    if plan.description is not None and workspace is not None:
+        workspace.finish_description(plan.description, results)
+
+
+def update_result_path(update: PlannedUpdate, outcome: UpdateOutcome | None) -> Path:
+    """1件の更新の後の、そのファイルの位置（何もしなかったものは、いまの位置）。"""
+    if outcome is not None:
+        return outcome.path
+    return update.source_paths[0] if update.source_paths else update.item.record.path
 
 
 def describe_failure(name: str, exc: BaseException) -> str:
@@ -1003,6 +1039,22 @@ def describe_update_plan(plan: UpdatePlan, max_total_mb: float) -> str:
             f"・付箋・コメント・添付ファイルが残るファイル：{plan.hidden_remaining_count} 件"
             "（取り除く項目は、自動ではチェックが付きません）"
         )
+    if plan.description is not None:
+        job = plan.description
+        if job.replaces is not None:
+            how = f"前に作った「{job.replaces.name}」は消して、作り直します）"
+        elif job.target.exists():
+            how = "同じ名前のファイルを置き換えます）"
+        else:
+            how = "新しく作ります）"
+        place = "対象フォルダ" if not is_batch_dir_name(job.target.parent.name) else f"「{job.target.parent.name}」フォルダ"
+        lines.append(f"・証拠説明書の作成：1 件（{place}の「{job.target.name}」。" + how)
+        if job.conflict:
+            lines.append(f"　※ {job.conflict}")
+        if job.unchosen:
+            lines.append(f"　原本・写しの別を選んでいない行：{job.unchosen} 行")
+        if job.blank:
+            lines.append(f"　作成年月日・作成者・立証趣旨のどれかが空の行：{job.blank} 行")
     if plan.unviewed_count:
         lines.append("")
         lines.append(

@@ -52,6 +52,13 @@ class FilesMixin:
     # ------------------------------------------------------------------ 削除
     def remove_error(self, record: FileRecord) -> str | None:
         name = record.path.name
+        if self.is_description_file(record):
+            # 証拠説明書は、下書きにせず、その場でフォルダごとごみ箱に移す（画面の［削除］が、
+            # 証拠説明書だけを選んでいるときに行う。workspace_description.delete_description）。
+            return (
+                f"証拠説明書（{name}）は、ほかのファイルと一緒には削除できません。"
+                "証拠説明書だけを選んでから、削除してください。"
+            )
         if self.is_created(record):
             return (
                 f"分けて作るファイル（まだ更新していないもの）は、削除できません：{name}"

@@ -40,6 +40,8 @@ BUTTON_ICONS = {
     "枝番の区切り": "text_number_list_ltr",
     "元に戻す": "arrow_undo",
     "やり直す": "arrow_redo",
+    # 「証拠説明書」の組（4.17。2026-11-18）。表のアイコンは VA Document・VA Request と同じもの。
+    "作成": "table",
 }
 
 

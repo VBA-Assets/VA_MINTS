@@ -176,6 +176,23 @@ def check_evidence_sequence(
     return tuple(findings)
 
 
+def evidence_sort_key(match: EvidenceNumberMatch, config: EvidenceNumberConfig) -> tuple:
+    """証拠番号の並び順（符号は config.symbols の順〔甲・乙・丙〕、添字、番号、枝番）。"""
+    try:
+        symbol = config.symbols.index(match.symbol)
+    except ValueError:
+        symbol = len(config.symbols)
+    subletter = unicodedata.normalize("NFKC", match.subletter).upper()
+    branch = int(match.branch_from) if match.branch_from is not None else 0
+    return (symbol, subletter, int(match.number), branch)
+
+
+def evidence_base_label(match: EvidenceNumberMatch) -> str:
+    """枝番を除いた証拠番号を、半角にそろえた形（例：「乙Ａ００１」→「乙A001」）。"""
+    sub = unicodedata.normalize("NFKC", match.subletter).upper()
+    return f"{match.symbol}{sub}{unicodedata.normalize('NFKC', match.number)}"
+
+
 # ---------------------------------------------------------------------- 枝番の区切り（Ver300）
 def name_with_evidence(name: str, label: str, config: EvidenceNumberConfig) -> str:
     """ファイル名 name の先頭の証拠番号を label（例：「甲005」「甲005-2」「甲005-1~3」）に
