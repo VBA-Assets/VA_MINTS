@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mints_prep.models import (
+from va_mints.models import (
     Classification,
     FileRecord,
     FilenameFinding,
@@ -8,7 +8,7 @@ from mints_prep.models import (
     PiiFinding,
     RedactionFinding,
 )
-from mints_prep.processors.report_writer import (
+from va_mints.processors.report_writer import (
     collect_check_warnings,
     collect_critical_warnings,
     format_evidence_sequence_warnings,
@@ -65,7 +65,7 @@ def test_collect_critical_warnings_empty_when_nothing_critical():
 def test_collect_check_warnings_covers_password_permission_size_and_orientation():
     """書き出し完了時の警告画面（ui/app.py）に、検出のみの要修正事項
     （パスワード・操作制限・用紙寸法・向き不一致）がすべて表示されること。"""
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     password = _record("locked.pdf", pdf_finding=PdfFinding(has_password=True))
     restricted = _record(
@@ -92,7 +92,7 @@ def test_collect_check_warnings_covers_password_permission_size_and_orientation(
 
 
 def test_collect_check_warnings_empty_when_all_compliant():
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     records = [
         _record("ok.pdf", pdf_finding=PdfFinding(has_password=False, page_size_judgments=("A4",))),

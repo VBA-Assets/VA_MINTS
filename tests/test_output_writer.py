@@ -5,10 +5,10 @@ import pikepdf
 from pypdf import PdfReader
 
 from fixtures.generate_fixtures import make_a4_pdf
-from mints_prep.config import EvidenceNumberConfig, EvidenceStampConfig, FilenameConfig
-from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
-from mints_prep.processors.evidence_merger import find_branch_merge_groups
-from mints_prep.processors.output_writer import (
+from va_mints.config import EvidenceNumberConfig, EvidenceStampConfig, FilenameConfig
+from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
+from va_mints.processors.evidence_merger import find_branch_merge_groups
+from va_mints.processors.output_writer import (
     PlannedCopy,
     copy_to_output,
     find_existing_conflicts,

@@ -25,3 +25,6 @@ samples_split/
 samples_compress/
 samples_ocr/
 samples_av/
+
+# GitHub で公開する写し（別の git。VBA-Assets/VA_MINTS。2026-11-18 に ..\VA_MINTS_GitHub から移した）
+/GitHub/

@@ -1,14 +1,14 @@
 from pathlib import Path
 
-from mints_prep.config import EvidenceNumberConfig, UploadConfig
-from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus
-from mints_prep.processors.batch_planner import (
+from va_mints.config import EvidenceNumberConfig, UploadConfig
+from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus
+from va_mints.processors.batch_planner import (
     Batch,
     find_batch_conflicts,
     plan_batches,
     resolve_batch_dir,
 )
-from mints_prep.processors.output_writer import PlannedCopy, copy_to_output
+from va_mints.processors.output_writer import PlannedCopy, copy_to_output
 
 _EVIDENCE_CONFIG = EvidenceNumberConfig(symbols=("甲", "乙", "丙"), digits=3)
 

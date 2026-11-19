@@ -10,16 +10,16 @@ import pytest
 from PIL import Image, ImageDraw
 from pypdf import PdfReader
 
-from mints_prep.config import CompressConfig, load_config
-from mints_prep.processors.compress import (
+from va_mints.config import CompressConfig, load_config
+from va_mints.processors.compress import (
     compress_pdf_lossless,
     compressed_size,
     reduce_image_file,
     reduce_pdf_images,
 )
-from mints_prep.processors.updater import APPLIED_COMPRESS, APPLIED_REDUCE, Manifest, restore_all
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import apply_all_updates, Workspace, describe_update_plan
+from va_mints.processors.updater import APPLIED_COMPRESS, APPLIED_REDUCE, Manifest, restore_all
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import apply_all_updates, Workspace, describe_update_plan
 
 
 def _scan_image(size=(2480, 3508), text="page") -> Image.Image:

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mints_prep.detectors.size_detector import get_size_bytes
+from va_mints.detectors.size_detector import get_size_bytes
 
 
 def test_get_size_bytes(tmp_path: Path):

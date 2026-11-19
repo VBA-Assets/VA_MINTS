@@ -7,7 +7,7 @@ from fixtures.generate_fixtures import (
     make_pdf_with_highlight_redaction_failure,
     make_pdf_with_proper_redaction,
 )
-from mints_prep.detectors.redaction_detector import detect_redaction_residue
+from va_mints.detectors.redaction_detector import detect_redaction_residue
 
 
 def test_black_box_redaction_failure_detected(tmp_path: Path):

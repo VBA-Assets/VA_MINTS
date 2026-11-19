@@ -9,9 +9,9 @@ from fixtures.generate_fixtures import (
     make_multipage_pdf,
     make_password_pdf,
 )
-from mints_prep.config import EvidenceStampConfig
-from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, PdfFinding
-from mints_prep.ui.preview import get_page_count, render_preview, render_preview_with_stamp
+from va_mints.config import EvidenceStampConfig
+from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus, PdfFinding
+from va_mints.ui.preview import get_page_count, render_preview, render_preview_with_stamp
 
 _STAMP_CONFIG = EvidenceStampConfig(font_size_pt=14, margin_top_mm=8, margin_right_mm=8)
 
@@ -202,7 +202,7 @@ def test_fit_preview_enlarges_small_image_keeping_aspect_ratio():
     """画素数の少ない画像は、プレビューの枠いっぱいまで拡大する（縦横比は保つ）。"""
     from PIL import Image
 
-    from mints_prep.ui.preview import fit_preview
+    from va_mints.ui.preview import fit_preview
 
     small = Image.new("RGB", (100, 50), "white")
     fitted = fit_preview(small, 600, 800)

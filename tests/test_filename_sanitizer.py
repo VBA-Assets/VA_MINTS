@@ -1,5 +1,5 @@
-from mints_prep.detectors.filename_detector import check_filename
-from mints_prep.processors.filename_sanitizer import needs_sanitization, sanitize_filename
+from va_mints.detectors.filename_detector import check_filename
+from va_mints.processors.filename_sanitizer import needs_sanitization, sanitize_filename
 
 
 def test_no_sanitization_needed_for_compliant_name(config):

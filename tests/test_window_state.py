@@ -3,9 +3,7 @@
 
 from pathlib import Path
 
-import pytest
-
-from mints_prep.user_settings import (
+from va_mints.user_settings import (
     UserSettings,
     load_user_settings,
     parse_geometry,
@@ -30,45 +28,32 @@ def test_broken_window_fields_are_ignored(tmp_path: Path):
     assert load_user_settings(path) == UserSettings()
 
 
-def _window():
-    pytest.importorskip("tkinter")
-    import tkinter as tk
-
-    from mints_prep.ui.app import MainWindow
-
-    try:
-        return MainWindow()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
-
-
-def test_maximized_window_is_saved_on_close_and_restored(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("APPDATA", str(tmp_path))  # 本物の設定ファイルを汚さない
-    app = _window()
-    try:
-        app.geometry("1000x600+40+50")
-        app.update()
-        app.state("zoomed")
-        app.update()
-        app._on_close()  # 下書きがないので、そのまま閉じる
-    except BaseException:
-        app.destroy()
-        raise
+def test_maximized_window_is_saved_on_close_and_restored(monkeypatch, app):
+    """閉じるときに覚え、次に起動したときに戻す。画面は試験の全体で1つなので（conftest）、閉じる（destroy）
+    の代わりに何もしない手順にし、起動したときの戻し（_restore_window）を、覚えた設定を読み直して行う。"""
+    monkeypatch.setattr(app, "destroy", lambda: None)
+    app.deiconify()
+    app.geometry("1500x800+40+50")
+    app.update()
+    app.state("zoomed")
+    app.update()
+    app._on_close()  # 下書きがないので、そのまま閉じる（設定は、この試験の一時フォルダに書く）
     saved = load_user_settings(settings_path())
     assert saved.window_maximized is True
     # 最大化を解いたときに戻る大きさは、最大化する前の大きさ
-    assert parse_geometry(saved.window_geometry)[:2] == (1000, 600)
+    assert parse_geometry(saved.window_geometry)[:2] == (1500, 800)
 
-    app = _window()
-    try:
-        app.update()
-        assert app.state() == "zoomed"
-        app.state("normal")
-        app.update()
-        assert (app.winfo_width(), app.winfo_height()) == (1000, 600)
-        app._on_close()
-    except BaseException:
-        app.destroy()
-        raise
+    # 次に起動したとき
+    app.state("normal")
+    app.geometry("700x500+60+70")
+    app.update()
+    app._user_settings = load_user_settings()
+    app._restore_window()
+    app.update()
+    assert app.state() == "zoomed"
+    app.state("normal")
+    app.update()
+    assert (app.winfo_width(), app.winfo_height()) == (1500, 800)
+    app._on_close()
     saved = load_user_settings(settings_path())
-    assert saved.window_maximized is None and parse_geometry(saved.window_geometry)[:2] == (1000, 600)
+    assert saved.window_maximized is None and parse_geometry(saved.window_geometry)[:2] == (1500, 800)

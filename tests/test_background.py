@@ -6,18 +6,7 @@ import pytest
 
 tk = pytest.importorskip("tkinter")
 
-from mints_prep.ui.background import BackgroundJobs  # noqa: E402
-
-
-@pytest.fixture
-def root():
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
-    r.withdraw()
-    yield r
-    r.destroy()
+from va_mints.ui.background import BackgroundJobs  # noqa: E402
 
 
 def _pump(root, until, seconds=5.0):

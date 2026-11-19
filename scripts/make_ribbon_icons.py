@@ -6,7 +6,7 @@ VA Case・VA Document と同じく2色にする：塗りつぶし版（<名前>_
 大きいボタンの色付きのアイコン（<名前>_large.svg）があれば、それも PNG にする。
 
 PyMuPDF は AGPL なので、配るもの（requirements.txt・exe）には入れない。ここで一度 PNG にして
-src\\mints_prep\\ui\\icons\\ に入れ、起動したときは Pillow で画面の拡大率に合わせて縮める（ui\\icons.py）。
+src\\va_mints\\ui\\icons\\ に入れ、起動したときは Pillow で画面の拡大率に合わせて縮める（ui\\icons.py）。
 このスクリプトだけが PyMuPDF を使う（開発の PC にあるもの）。
 
 使い方：python scripts\\make_ribbon_icons.py
@@ -19,10 +19,10 @@ import fitz  # PyMuPDF（開発のときだけ）
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from mints_prep.ui import theme  # noqa: E402
+from va_mints.ui import theme  # noqa: E402
 
 SRC = ROOT / "scripts" / "icons_src"
-OUT = ROOT / "src" / "mints_prep" / "ui" / "icons"
+OUT = ROOT / "src" / "va_mints" / "ui" / "icons"
 SVG_FILL = "#212121"
 SMALL = 64     # 小さいアイコンの PNG の大きさ（画素。起動したときに縮める）
 LARGE = 128    # 大きいボタンの色付きのアイコンの PNG の大きさ

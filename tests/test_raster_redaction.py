@@ -8,7 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
-from mints_prep.detectors.redaction_detector import detect_redaction_residue
+from va_mints.detectors.redaction_detector import detect_redaction_residue
 
 W, H = A4
 

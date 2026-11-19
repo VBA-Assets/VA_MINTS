@@ -5,8 +5,8 @@ from pypdf import PdfReader
 from PIL import Image
 
 from fixtures.generate_fixtures import make_a4_pdf, make_image_without_metadata
-from mints_prep.config import EvidenceStampConfig
-from mints_prep.processors.evidence_stamp import stamp_image, stamp_pdf
+from va_mints.config import EvidenceStampConfig
+from va_mints.processors.evidence_stamp import stamp_image, stamp_pdf
 
 _CONFIG = EvidenceStampConfig(font_size_pt=10, margin_top_mm=8, margin_right_mm=8)
 

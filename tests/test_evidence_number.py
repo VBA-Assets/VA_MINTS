@@ -1,4 +1,4 @@
-from mints_prep.naming.evidence_number import check_evidence_sequence, match_evidence_number
+from va_mints.naming.evidence_number import check_evidence_sequence, match_evidence_number
 
 
 def test_simple_match(config):

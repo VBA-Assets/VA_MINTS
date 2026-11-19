@@ -5,7 +5,7 @@ pytest.importorskip("tkinter")
 import tkinter as tk  # noqa: E402
 from tkinter import ttk  # noqa: E402
 
-from mints_prep.ui.theme import (  # noqa: E402
+from va_mints.ui.theme import (  # noqa: E402
     ACCENT,
     CONTROL_BG,
     HOVER_BG,
@@ -15,15 +15,6 @@ from mints_prep.ui.theme import (  # noqa: E402
     WINDOW_BG,
     apply_theme,
 )
-
-
-@pytest.fixture(scope="module")
-def root():
-    r = tk.Tk()
-    r.withdraw()
-    apply_theme(r)
-    yield r
-    r.destroy()
 
 
 def test_clam_theme_selected(root: tk.Tk):

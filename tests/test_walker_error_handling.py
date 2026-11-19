@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from mints_prep.models import Classification
-from mints_prep.scanner import walker as walker_module
-from mints_prep.scanner.walker import scan_folder
+from va_mints.models import Classification
+from va_mints.scanner import walker as walker_module
+from va_mints.scanner.walker import scan_folder
 
 
 def test_scan_folder_isolates_per_file_errors(tmp_path: Path, config, monkeypatch):

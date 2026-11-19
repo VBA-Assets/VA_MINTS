@@ -6,7 +6,7 @@ import pdfplumber
 import pytest
 
 from fixtures.generate_fixtures import make_multipage_pdf
-from mints_prep.processors.evidence_description import (
+from va_mints.processors.evidence_description import (
     CATEGORY_COPY,
     CATEGORY_DATA,
     CATEGORY_DIGITIZED,
@@ -20,10 +20,10 @@ from mints_prep.processors.evidence_description import (
     data_path,
     split_title,
 )
-from mints_prep.processors.updater import Manifest, restore_all
-from mints_prep.processors.evidence_description import rekey_after_restore
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import Workspace, apply_all_updates, describe_update_plan
+from va_mints.processors.updater import Manifest, restore_all
+from va_mints.processors.evidence_description import rekey_after_restore
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import Workspace, apply_all_updates, describe_update_plan
 
 
 def _ws(root: Path, config) -> Workspace:
@@ -274,7 +274,7 @@ def test_changing_number_replaces_the_pdf(tmp_path: Path, config):
 
 def test_click_on_preview_finds_the_row(tmp_path: Path):
     """証拠説明書の PDF のプレビューでクリックした位置から、その行の号証を探す（2026-11-18 班長指示）。"""
-    from mints_prep.ui.description_sync import label_positions, row_label_at
+    from va_mints.ui.description_sync import label_positions, row_label_at
 
     rows = [Row("甲001", "契約書", purpose="長い立証趣旨。" * 30), Row("甲002", "領収書"), Row("甲003", "写真")]
     out = build_pdf(Header(), rows, tmp_path / "証拠説明書.pdf")
@@ -427,7 +427,7 @@ def test_rename_from_title_follows_the_guide(tmp_path: Path, config):
 def test_click_on_continued_row_finds_it(tmp_path: Path):
     """1ページに収まらずに分けた行の、次のページの続きをクリックしても、その行の号証を返す
     （2026-11-18。続きの部分には号証の字がないため）。見出しの行の上は None。"""
-    from mints_prep.ui.description_sync import label_positions, row_label_at
+    from va_mints.ui.description_sync import label_positions, row_label_at
 
     rows = [Row("甲001", "文献", purpose="長い立証趣旨。" * 600), Row("甲002", "領収書")]
     out = build_pdf(Header(), rows, tmp_path / "証拠説明書.pdf")

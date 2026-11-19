@@ -1,122 +1,112 @@
-"""配布用リリースzip（dist/VA_mints_VerNNN.zip）を組み立てる。
+"""配布用のリリース（release_VerNNN\\VA_mints_VerNNN\\ と、dist\\ の zip）を組み立てる（標準 02「ビルドと配布物」）。
 
-Ver.100は手作業でzip化されており再現手順が残っていなかったため、Ver.110
-以降はこのスクリプトで再現できるようにする（samples・アイコン・マニュアルと
-同じ「ソース＋生成スクリプトのみ履歴管理し、生成物は都度作る」方針）。
+前提（このスクリプトはビルドそのものはしない。先に済ませておく）：
+    1. python -m PyInstaller va_mints.spec --noconfirm   （dist\\VA_mints.exe を最新のコードで作る）
+    2. python scripts\\generate_manual.py                 （docs\\manual\\VA_mints_操作マニュアル_VerNNN.pdf。
+       先にマニュアルのフロントマターの version を上げておく）
+    3. python scripts\\make_notices.py                    （部品を足したとき・版を上げたとき）
 
-前提（このスクリプトはビルドそのものは行わない。事前に済ませておくこと）：
-    1. .venv\\Scripts\\pyinstaller.exe mints_prep.spec --noconfirm
-       （dist\\VA_mints.exe を最新コードで生成）
-    2. dist\\config.yaml をリポジトリ直下のconfig.yamlと同期
-       （cp config.yaml dist\\config.yaml）
-    3. .venv\\Scripts\\python.exe scripts\\generate_manual.py
-       （docs\\manual\\VA_mints_操作マニュアル_VerNNN.pdf を生成。
-       事前にdocs/manual/*.mdのフロントマターのversionを更新しておくこと）
+実行のしかた：
+    python scripts\\build_release.py Ver311
+    python scripts\\build_release.py Ver311 dist_next
+        （dist\\VA_mints.exe を誰かが開いていて上書きできないとき。PyInstaller を --distpath dist_next で
+         動かして作った exe を使う）
 
-実行方法：
-    .venv\\Scripts\\python.exe scripts\\build_release.py Ver110
+できるもの：
+    release_Ver311\\VA_mints_Ver311\\  （exe・config.yaml・LICENSE・THIRD_PARTY_NOTICES.txt・README.md・マニュアル\\・source\\）
+    dist\\VA_mints_Ver311.zip          （上のフォルダを zip にしたもの）
+統合版のインストーラー（VA_Documentシリーズ\\共通\\統合版）は、release_VerNNN\\VA_mints_VerNNN\\ を参照する。
+release_*\\・dist\\ は、ビルドの生成物として git に入れない。
+作ったら、VAプロジェクト\\標準\\点検\\check_tools.py release で、内部資料と個人の情報が入っていないことを確かめる。
 
-生成物：
-    dist/VA_mints_Ver110.zip
-    （配布用zipの置き場所はVA FAX〔dist/VA_FAX_v100.zip〕に合わせてdist/と
-    する。2026-07-30変更。それ以前はrelease_VerNNN/直下に置いていた）
-    release_Ver110/VA_mints_Ver110/
-    （zip化前のステージングフォルダ。内容確認用に残す。release_*/・dist/は
-    いずれもビルド生成物としてgitignore対象）
+VA mints だけのこと：config.yaml（mints の上限などの数値。利用者がテキストエディタで直せる）を、exe の隣に置く。
 """
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
+import stat
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "src"))
+from va_mints import FILE_STEM, VERSION_LABEL  # noqa: E402
 
-# source/ に含めるソース一式。samplesの実測データ・primary-sources（一次資料
-# 現物。著作権の観点から再配布しない）・__pycache__・.pyc等は含めない
-# （Ver.100の構成を踏襲）。
-_SOURCE_FILES = [
-    "CLAUDE.md", "LICENSE", "THIRD_PARTY_NOTICES.txt", "main.py", "mints_prep.spec", "pytest.ini", "requirements.txt",
-]
-_SOURCE_DIR_SPECS: list[tuple[str, str, tuple[str, ...]]] = [
-    # (相対パス, コピー先の相対パス, 追加で除外するディレクトリ名のタプル)
-    # __pycache__・.pyc・.pytest_cacheはどのディレクトリでも常に除外する
-    # （_ignore内で一律処理するため、ここには追加除外分のみ書く）。
-    ("assets", "assets", ()),
-    ("docs", "docs", ("primary-sources",)),  # 一次資料現物は著作権のため除外
-    ("scripts", "scripts", ()),
-    ("src", "src", ()),
-    ("tests", "tests", ()),
-]
+EXE = f"{FILE_STEM}.exe"
 
-_ALWAYS_EXCLUDE_DIRS = ("__pycache__", ".pytest_cache")
+# source\\ に入れないもの（git の管理下でも、公開しない内部の資料）。公開する要件定義書は docs/03_requirements.md だけ
+# （CLAUDE.md の冒頭）。docs/primary-sources/ は裁判所の資料（著作権があるので、配らない）。
+_EXCLUDE = [re.compile(p) for p in (
+    r"(^|/)CLAUDE\.md$",
+    r"(^|/)検討_",
+    r"^試作/",
+    r"^articles/",
+    r"^\.claude/",
+    r"^docs/01_project-brief\.md$",
+    r"^docs/02_constraints-report\.md$",
+    r"^docs/primary-sources/",
+)]
 
 
-def _copy_tree_excluding(src: Path, dst: Path, exclude_names: tuple[str, ...]) -> None:
-    def _ignore(dir_path: str, names: list[str]) -> set[str]:
-        ignored = {
-            n for n in names if n in exclude_names or n in _ALWAYS_EXCLUDE_DIRS or n.endswith(".pyc")
-        }
-        # docs/直下の生成PDF（マニュアル）はトップレベルの「マニュアル/」フォルダに
-        # 別途配置するため、source/docs/manual/配下のPDFはソース重複を避けて除外する。
-        if dir_path.replace("\\", "/").endswith("docs/manual"):
-            ignored |= {n for n in names if n.endswith(".pdf")}
-        return ignored
-
-    shutil.copytree(src, dst, ignore=_ignore)
+def _source_files() -> list[str]:
+    out = subprocess.run(["git", "-c", "core.quotepath=false", "ls-files", "-z"], cwd=ROOT, capture_output=True,
+                         check=True).stdout
+    files = [f for f in out.decode("utf-8").split("\0") if f]
+    return [f for f in files if not any(p.search(f) for p in _EXCLUDE)]
 
 
-def build(version: str) -> Path:
-    """version例："Ver110"（config.yaml等の表記に合わせ、ドットなし表記）。"""
-    dist_exe = ROOT / "dist" / "VA_mints.exe"
-    dist_config = ROOT / "dist" / "config.yaml"
-    manual_pdf = ROOT / "docs" / "manual" / f"VA_mints_操作マニュアル_{version}.pdf"
-    license_file = ROOT / "LICENSE"
-    # 使っている部品のライセンスの表示（scripts/make_notices.py で作る。2026-11-17 から配布物に添える）
-    notices_file = ROOT / "THIRD_PARTY_NOTICES.txt"
+def _clear_readonly(func, path, exc):
+    """OneDrive はフォルダに読み取り専用の属性を付け、Windows は読み取り専用のフォルダを消せない。属性を外して、もう一度消す。"""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
-    missing = [p for p in (dist_exe, dist_config, manual_pdf, license_file, notices_file) if not p.exists()]
+
+def build(version: str, dist: Path | None = None) -> Path:
+    if not re.fullmatch(r"Ver[0-9A-Z]{3}", version):
+        raise SystemExit("版は「Ver311」の形で指定してください。")
+    if VERSION_LABEL != version:
+        raise SystemExit(f"src の __init__.py の版（{VERSION_LABEL}）が {version} と合いません。")
+    exe = (dist or ROOT / "dist") / EXE
+    manual = ROOT / "docs" / "manual" / f"{FILE_STEM}_操作マニュアル_{version}.pdf"
+    required = [exe, manual, ROOT / "config.yaml", ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.txt",
+                ROOT / "README.md"]
+    missing = [str(p.relative_to(ROOT)) for p in required if not p.exists()]
     if missing:
-        joined = "\n  ".join(str(p) for p in missing)
-        raise FileNotFoundError(
-            f"リリースに必要なファイルが見つかりません（先に準備すること）：\n  {joined}"
-        )
+        raise SystemExit("足りないファイルがあります：" + "、".join(missing))
+    # exe が、いまのソースより古くないかを確かめる（直したのに作り直し忘れるのを防ぐ）
+    newest = max(p.stat().st_mtime for p in (ROOT / "src").rglob("*") if p.is_file() and "__pycache__" not in p.parts)
+    if exe.stat().st_mtime < newest:
+        raise SystemExit("exe がソースより古いです。先に PyInstaller で作り直してください。")
 
-    release_dir = ROOT / f"release_{version}"
-    package_dir = release_dir / f"VA_mints_{version}"
-    if release_dir.exists():
-        shutil.rmtree(release_dir)
-    package_dir.mkdir(parents=True)
+    stage = ROOT / f"release_{version}" / f"{FILE_STEM}_{version}"
+    if stage.exists():
+        shutil.rmtree(stage, onexc=_clear_readonly)
+    (stage / "マニュアル").mkdir(parents=True)
+    shutil.copy2(exe, stage / EXE)
+    shutil.copy2(manual, stage / "マニュアル" / manual.name)
+    for name in ("config.yaml", "LICENSE", "THIRD_PARTY_NOTICES.txt", "README.md"):
+        shutil.copy2(ROOT / name, stage / name)
+    for f in _source_files():
+        dest = stage / "source" / f
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / f, dest)
 
-    shutil.copy2(dist_exe, package_dir / "VA_mints.exe")
-    shutil.copy2(dist_config, package_dir / "config.yaml")
-    shutil.copy2(license_file, package_dir / "LICENSE")
-    shutil.copy2(notices_file, package_dir / "THIRD_PARTY_NOTICES.txt")
-
-    manual_dir = package_dir / "マニュアル"
-    manual_dir.mkdir()
-    shutil.copy2(manual_pdf, manual_dir / manual_pdf.name)
-
-    source_dir = package_dir / "source"
-    source_dir.mkdir()
-    for name in _SOURCE_FILES:
-        shutil.copy2(ROOT / name, source_dir / name)
-    for rel_src, rel_dst, exclude in _SOURCE_DIR_SPECS:
-        _copy_tree_excluding(ROOT / rel_src, source_dir / rel_dst, exclude)
-
-    zip_path = ROOT / "dist" / f"VA_mints_{version}.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in sorted(package_dir.rglob("*")):
-            zf.write(path, path.relative_to(release_dir))
-
+    zip_path = ROOT / "dist" / f"{FILE_STEM}_{version}.zip"
+    zip_path.parent.mkdir(exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(stage.rglob("*")):
+            if p.is_file():
+                z.write(p, Path(stage.name) / p.relative_to(stage))
     return zip_path
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("使い方：python scripts\\build_release.py VerNNN（例：Ver110）", file=sys.stderr)
-        raise SystemExit(1)
-    result = build(sys.argv[1])
-    print(f"生成完了：{result}")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("使い方：python scripts\\build_release.py Ver311 [exe のあるフォルダ]")
+    path = build(sys.argv[1], Path(sys.argv[2]).resolve() if len(sys.argv) == 3 else None)
+    print(f"作りました：{path}（{path.stat().st_size:,} バイト）")

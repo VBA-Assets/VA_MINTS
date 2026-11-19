@@ -7,22 +7,10 @@ pytest.importorskip("tkinter")
 import tkinter as tk  # noqa: E402
 from tkinter import ttk  # noqa: E402
 
-from mints_prep.ui import theme  # noqa: E402
-from mints_prep.ui.icons import BUTTON_ICONS, ICON_DIR, IconSet, icon_name  # noqa: E402
-from mints_prep.ui.ribbon import Ribbon  # noqa: E402
-from mints_prep.ui.tooltip import Tooltip, _by_sentence  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def root():
-    try:
-        r = tk.Tk()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
-    r.withdraw()
-    theme.apply_theme(r)
-    yield r
-    r.destroy()
+from va_mints.ui import theme  # noqa: E402
+from va_mints.ui.icons import BUTTON_ICONS, ICON_DIR, IconSet, icon_name  # noqa: E402
+from va_mints.ui.ribbon import Ribbon  # noqa: E402
+from va_mints.ui.tooltip import Tooltip, _by_sentence  # noqa: E402
 
 
 def test_every_button_icon_has_images():

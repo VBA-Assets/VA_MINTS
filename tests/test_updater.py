@@ -8,7 +8,7 @@ import pytest
 from pypdf import PdfReader
 
 from fixtures.generate_fixtures import make_a4_pdf, make_multipage_pdf
-from mints_prep.processors.updater import (
+from va_mints.processors.updater import (
     BACKUP_DIRNAME,
     MANIFEST_FILENAME,
     Manifest,
@@ -16,8 +16,8 @@ from mints_prep.processors.updater import (
     restore_all,
     update_item,
 )
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import apply_all_updates, Workspace
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import apply_all_updates, Workspace
 
 
 def _workspace(root: Path, config) -> Workspace:
@@ -400,7 +400,7 @@ def test_empty_read_only_folders_are_removed(tmp_path: Path):
     import os
     import stat
 
-    from mints_prep.processors.updater import _remove_empty_dirs
+    from va_mints.processors.updater import _remove_empty_dirs
 
     top = tmp_path / "元のファイル"
     inner = top / "材料"

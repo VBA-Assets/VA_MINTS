@@ -24,7 +24,7 @@ VA FAXのサイズ決定基準（「FAX」3文字が左右余白内に収まる�
 実行方法：
     .venv\\Scripts\\python.exe scripts\\generate_icon.py
 
-生成後、mints_prep.specのicon指定によりexeへ埋め込まれる。
+生成後、va_mints.specのicon指定によりexeへ埋め込まれる。
 """
 
 from __future__ import annotations

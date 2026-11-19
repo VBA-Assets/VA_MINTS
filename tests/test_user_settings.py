@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from mints_prep.user_settings import (
+from va_mints.user_settings import (
     UserSettings,
     apply_user_settings,
     load_user_settings,

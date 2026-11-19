@@ -4,9 +4,9 @@ mutagen〔GPL〕を外して自前にした）。"""
 import struct
 from pathlib import Path
 
-from mints_prep.detectors.av_tags import mp3_tag_fields, mp4_tag_fields, strip_mp3_tags
-from mints_prep.detectors.metadata_detector import detect_metadata
-from mints_prep.processors.metadata_remover import can_strip_metadata, strip_metadata
+from va_mints.detectors.av_tags import mp3_tag_fields, mp4_tag_fields, strip_mp3_tags
+from va_mints.detectors.metadata_detector import detect_metadata
+from va_mints.processors.metadata_remover import can_strip_metadata, strip_metadata
 
 # 有効な MPEG1 Layer3 のフレーム（128kbps・44.1kHz＝417バイト）×4
 _AUDIO = (b"\xff\xfb\x90\x64" + b"\x00" * 413) * 4
@@ -138,10 +138,10 @@ def test_mp4_tags_are_not_stripped(tmp_path: Path):
 
 def test_mp4_metadata_is_shown_as_notice_not_option():
     """右のペインでは、MP4 のタグを、チェックできない知らせとして出す。"""
-    from mints_prep.config import FilenameConfig
-    from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
-    from mints_prep.processors.output_writer import PlannedCopy
-    from mints_prep.ui.review_logic import ReviewItem, build_review_options
+    from va_mints.config import FilenameConfig
+    from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
+    from va_mints.processors.output_writer import PlannedCopy
+    from va_mints.ui.review_logic import ReviewItem, build_review_options
 
     name = "甲004 動画.mp4"
     record = FileRecord(

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mints_prep.models import (
+from va_mints.models import (
     Classification,
     EvidenceNumberMatch,
     FileRecord,
@@ -9,7 +9,7 @@ from mints_prep.models import (
     PdfFinding,
     PiiFinding,
 )
-from mints_prep.ui.formatting import describe_expected_processing, format_size_display
+from va_mints.ui.formatting import describe_expected_processing, format_size_display
 
 
 def test_bytes_shown_as_is():
@@ -133,7 +133,7 @@ def test_permission_restricted_pdf_warning_shown_distinct_from_password():
 def test_tool_processable_findings_annotated():
     """ファイル名整形・メタデータ除去は本ツールで処理できる旨を注記し、
     他アプリでの対処が必要な検出事項と区別できるようにする（分類はBのまま）。"""
-    from mints_prep.models import MetadataFinding
+    from va_mints.models import MetadataFinding
 
     record = FileRecord(
         path=Path("bad<name>.pdf"),
@@ -152,7 +152,7 @@ def test_tool_processable_findings_annotated():
 
     text = describe_expected_processing(record)
 
-    assert text.count("本ツールで処理できます") == 3
+    assert text.count("VA mints で処理できます") == 3
 
 
 def test_externally_fixed_findings_not_annotated():
@@ -171,7 +171,7 @@ def test_externally_fixed_findings_not_annotated():
 
     text = describe_expected_processing(record)
 
-    assert "書き出し時に本ツールで処理できます" not in text
+    assert "書き出し時にVA mints で処理できます" not in text
 
 
 def test_pii_warning_uses_non_committal_wording():
@@ -191,7 +191,7 @@ def test_pii_warning_uses_non_committal_wording():
     text = describe_expected_processing(record)
 
     assert "個人情報の可能性がある記載を検出しました" in text
-    assert "意図した記載か確認してください" in text
+    assert "意図した記載か確かめてください" in text
     assert "メールアドレス" in text
 
 

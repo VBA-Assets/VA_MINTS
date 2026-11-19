@@ -5,8 +5,8 @@ from fixtures.generate_fixtures import (
     make_extension_mismatch_file,
     make_unsupported_file,
 )
-from mints_prep.detectors.format_detector import detect_format
-from mints_prep.models import FormatStatus
+from va_mints.detectors.format_detector import detect_format
+from va_mints.models import FormatStatus
 
 
 def test_valid_pdf_is_record_ready(tmp_path: Path):

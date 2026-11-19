@@ -7,10 +7,10 @@ import pytest
 from pypdf import PdfReader
 
 from fixtures.generate_fixtures import make_multipage_pdf
-from mints_prep.processors.pages import PageRef, build_pdf
-from mints_prep.processors.updater import BACKUP_DIRNAME, Manifest, restore_all
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import apply_all_updates, Workspace, describe_update_plan
+from va_mints.processors.pages import PageRef, build_pdf
+from va_mints.processors.updater import BACKUP_DIRNAME, Manifest, restore_all
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import apply_all_updates, Workspace, describe_update_plan
 
 
 def _ws(root: Path, config) -> Workspace:

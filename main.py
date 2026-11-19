@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from mints_prep.ui.app import main  # noqa: E402
+from va_mints.ui.app import main  # noqa: E402
 
 if __name__ == "__main__":
     main()

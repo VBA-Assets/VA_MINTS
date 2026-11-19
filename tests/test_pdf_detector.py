@@ -8,7 +8,7 @@ from fixtures.generate_fixtures import (
     make_password_pdf,
     make_permission_restricted_pdf,
 )
-from mints_prep.detectors.pdf_detector import detect_pdf
+from va_mints.detectors.pdf_detector import detect_pdf
 
 
 def test_a4_pdf_detected(tmp_path: Path, config):

@@ -79,7 +79,7 @@ COMPONENTS = [
      "GNU General Public License 第2版以降（ブートローダーの例外条項付き。exe に入るブートローダーは、"
      "この例外により、VA mints を MIT License で配ることを妨げない）", ["licenses/COPYING.txt"]),
     ("Fluent UI System Icons", None, "リボンのボタンのアイコン（元に戻す・やり直す・回転は、これをもとに自作）",
-     "MIT License", [ROOT / "src" / "mints_prep" / "ui" / "icons" / "LICENSE"]),
+     "MIT License", [ROOT / "src" / "va_mints" / "ui" / "icons" / "LICENSE"]),
 ]
 
 

@@ -2,21 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
-
-def _window(tmp_path, monkeypatch):
-    pytest.importorskip("tkinter")
-    import tkinter as tk
-
-    from mints_prep.ui.app import MainWindow
-
-    monkeypatch.setenv("APPDATA", str(tmp_path))  # 本物の設定ファイルを汚さない
-    try:
-        return MainWindow()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
-
 
 def _box(app):
     import tkinter as tk
@@ -29,8 +14,7 @@ def _box(app):
     return next(w for w in walk(app) if isinstance(w, tk.Text) and int(w.cget("height")) == 2)
 
 
-def test_folder_box_is_two_lines_and_follows_the_folder_value(tmp_path: Path, monkeypatch):
-    app = _window(tmp_path, monkeypatch)
+def test_folder_box_is_two_lines_and_follows_the_folder_value(tmp_path: Path, monkeypatch, app):
     try:
         app.withdraw()
         box = _box(app)
@@ -48,4 +32,4 @@ def test_folder_box_is_two_lines_and_follows_the_folder_value(tmp_path: Path, mo
         app.focus_get = lambda: box  # 隠した画面では入力先を移せないので、入力先だけを差し替える
         assert app._typing()
     finally:
-        app.destroy()
+        app.withdraw()

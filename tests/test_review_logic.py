@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from fixtures.generate_fixtures import make_a4_pdf
-from mints_prep.config import EvidenceNumberConfig, FilenameConfig
-from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
-from mints_prep.processors.evidence_merger import find_branch_merge_groups
-from mints_prep.processors.output_writer import PlannedCopy, plan_output_filenames
-from mints_prep.ui.review_logic import ReviewItem, apply_review_choices, build_review_options, orientation_notice
+from va_mints.config import EvidenceNumberConfig, FilenameConfig
+from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus, MetadataFinding
+from va_mints.processors.evidence_merger import find_branch_merge_groups
+from va_mints.processors.output_writer import PlannedCopy, plan_output_filenames
+from va_mints.ui.review_logic import ReviewItem, apply_review_choices, build_review_options, orientation_notice
 
 _FILENAME_CONFIG = FilenameConfig(
     max_length=100,
@@ -46,7 +46,7 @@ def _item(prelim: PlannedCopy) -> ReviewItem:
 def test_build_review_options_includes_disabled_info_item_for_unfixable_detection():
     """本ツールでは対処できない検出事項（パスワード等）は、グレーアウト
     （enabled=False）の情報項目としてチェックボックス一覧に含める。"""
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     record = FileRecord(
         path=Path("甲001 登記情報.pdf"),
@@ -74,7 +74,7 @@ def test_info_item_for_single_file_omits_filename_prefix():
     """逐次レビュー画面は1ファイルずつの表示でファイル名は画面上部に出ている
     ため、単独ファイルの検出項目にはファイル名を重複表示しない（レポート用の
     「・ファイル名：内容」形式から接頭辞を除去する回帰テスト）。"""
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     name = "甲001 登記情報.pdf"
     record = FileRecord(
@@ -112,7 +112,7 @@ def test_build_review_options_actionable_items_stay_enabled():
 def test_build_review_options_lists_info_items_before_actionable_items():
     """検出のみ・対処不可の項目は一覧の先頭（実行可否を選べる項目より上）に
     並べる（画面側はこの順序をもとに区切り線の位置を決める）。"""
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     record = FileRecord(
         path=Path("bad<name>.pdf"),
@@ -148,7 +148,7 @@ def test_build_review_options_omits_info_items_when_nothing_unfixable_detected()
 def test_build_review_options_for_merge_group_attributes_info_items_per_member(tmp_path: Path):
     """結合グループの各メンバーで検出内容が異なる場合、どのファイル由来かが
     分かる形でそれぞれ情報項目として列挙されること。"""
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     member1 = _record_with_real_file(tmp_path, "甲001-1 領収書.pdf")
     member2_path = make_a4_pdf(tmp_path / "甲001-2 領収書.pdf")
@@ -378,7 +378,7 @@ def test_apply_review_choices_for_merge_group_toggles_merge_stamp(tmp_path: Path
 
 
 def _mismatch_record(name: str = "甲001 横置き.pdf"):
-    from mints_prep.models import PdfFinding
+    from va_mints.models import PdfFinding
 
     return FileRecord(
         path=Path(name),
@@ -402,8 +402,8 @@ def _mismatch_record(name: str = "甲001 横置き.pdf"):
 def test_pane_warnings_do_not_repeat_remarks():
     """右ペインの赤字の注意と備考に、同じ内容を二度書かない（2026-11-16 班長指摘）。
     個人情報・墨消しの細目は赤字の下に並べ、言い換えの備考は外し、赤字にない備考は残す。"""
-    from mints_prep.models import PiiFinding, RedactionFinding
-    from mints_prep.ui.review_logic import build_pane_warnings
+    from va_mints.models import PiiFinding, RedactionFinding
+    from va_mints.ui.review_logic import build_pane_warnings
 
     pii_details = (
         "PDF本文にマイナンバーの可能性がある記載を検出（1ページ目）",
@@ -424,7 +424,7 @@ def test_pane_warnings_do_not_repeat_remarks():
     )
     labels = [
         "墨消し・マーカーの下に文字情報が残存している疑いあり（1ページ目、要確認）",
-        "個人情報の可能性がある記載を検出しました（マイナンバー、電話番号）。意図した記載か確認してください",
+        "個人情報の可能性がある記載を検出しました（マイナンバー、電話番号）。意図した記載か確かめてください",
         "単体で250.0MB。圧縮又は分割なしには提出不可能",
     ]
 

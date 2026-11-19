@@ -6,15 +6,15 @@ import pytest
 from pypdf import PdfReader
 
 from fixtures.generate_fixtures import make_a4_pdf, make_multipage_pdf
-from mints_prep.processors.updater import (
+from va_mints.processors.updater import (
     APPLIED_REMOVE,
     APPLIED_STAMP,
     BACKUP_DIRNAME,
     Manifest,
     restore_all,
 )
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import (
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import (
     COUNT_ADD,
     COUNT_REMOVE,
     Workspace,

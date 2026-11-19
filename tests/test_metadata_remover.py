@@ -4,7 +4,7 @@ import pikepdf
 from PIL import Image
 
 from fixtures.generate_fixtures import make_a4_pdf, make_image_with_metadata
-from mints_prep.processors.metadata_remover import (
+from va_mints.processors.metadata_remover import (
     strip_image_metadata,
     strip_metadata,
     strip_pdf_metadata,
@@ -131,7 +131,7 @@ def test_strip_jpeg_is_lossless_no_reencode(tmp_path: Path):
 def test_strip_jpeg_removes_icc_profile_and_comment(tmp_path: Path):
     """ICCプロファイル（APP2）・コメント（COM）も除去され、検出側
     （metadata_detector）が「メタデータなし」に収束すること。"""
-    from mints_prep.detectors.metadata_detector import detect_metadata
+    from va_mints.detectors.metadata_detector import detect_metadata
 
     src = tmp_path / "with_icc.jpg"
     Image.new("RGB", (8, 8), "white").save(
@@ -156,7 +156,7 @@ def test_strip_jpeg_malformed_file_raises_instead_of_degrading(tmp_path: Path):
     dest = tmp_path / "out.jpg"
 
     with pytest.raises(ValueError, match="JPEG"):
-        from mints_prep.processors.metadata_remover import _strip_jpeg_metadata_segments
+        from va_mints.processors.metadata_remover import _strip_jpeg_metadata_segments
 
         _strip_jpeg_metadata_segments(src, dest)
 
@@ -165,7 +165,7 @@ def test_strip_pdf_metadata_converges_on_rescan(tmp_path: Path):
     """PDFメタデータ除去後の出力を再検出しても「メタデータあり」に戻らない
     こと（pikepdfがProducer・MetadataDateを再挿入する不具合の回帰テスト。
     これが直っていないと「処理→再読み込み→A」の再検証ループが収束しない）。"""
-    from mints_prep.detectors.metadata_detector import detect_metadata
+    from va_mints.detectors.metadata_detector import detect_metadata
 
     src = make_a4_pdf(tmp_path / "with_meta.pdf", with_metadata=True)
     dest = tmp_path / "stripped.pdf"

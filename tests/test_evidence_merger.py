@@ -3,9 +3,9 @@ from pathlib import Path
 from pypdf import PdfReader
 
 from fixtures.generate_fixtures import make_a4_pdf, make_image_without_metadata, make_password_pdf
-from mints_prep.config import EvidenceNumberConfig, EvidenceStampConfig
-from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus, PdfFinding
-from mints_prep.processors.evidence_merger import find_branch_merge_groups, merge_branch_group
+from va_mints.config import EvidenceNumberConfig, EvidenceStampConfig
+from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus, PdfFinding
+from va_mints.processors.evidence_merger import find_branch_merge_groups, merge_branch_group
 
 _EVIDENCE_CONFIG = EvidenceNumberConfig(symbols=("甲", "乙", "丙"), digits=3)
 _STAMP_CONFIG = EvidenceStampConfig(font_size_pt=10, margin_top_mm=8, margin_right_mm=8)

@@ -8,8 +8,8 @@ from fixtures.generate_fixtures import (
     make_image_with_metadata,
     make_unsupported_file,
 )
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import (
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import (
     Workspace,
     describe_failure,
     describe_update_plan,
@@ -137,7 +137,8 @@ def test_skipped_files_are_listed_with_name_and_reason():
     locked = describe_failure("甲001 契約書.pdf", PermissionError(13, "Permission denied"))
     assert locked.startswith("甲001 契約書.pdf（") and "他のアプリで開いている可能性" in locked
     broken = describe_failure("甲002 領収書.pdf", ValueError("bad\n  xref " + "x" * 200))
-    assert "ValueError：bad xref" in broken and broken.endswith("…）")
+    # 部品の英語の文は出さず、要旨にする（型と場所は診断情報に記録する。標準 02「メッセージとエラー」）
+    assert broken == "甲002 領収書.pdf（予期しない誤りが起きました）" and "xref" not in broken
 
     text = format_skipped([locked, broken])
     assert "次の 2 件は更新できませんでした" in text
@@ -145,3 +146,16 @@ def test_skipped_files_are_listed_with_name_and_reason():
 
     many = format_skipped([f"{i}.pdf（理由）" for i in range(13)])
     assert "...ほか3件" in many
+
+
+def test_close_removes_temp_folders(tmp_path: Path, config):
+    """%TEMP% の作業フォルダ（スタンプのない姿など。証拠のページの写しが入る）は、close で消える（読み込み直す・
+    閉じるときに、画面が呼ぶ）。"""
+    make_a4_pdf(tmp_path / "甲001 契約書.pdf")
+    ws = _ws(tmp_path, config)
+    made = [ws._temp_dir("va_mints_test_"), ws._temp_dir("va_mints_test_")]
+    (made[0] / "写し.pdf").write_bytes(b"%PDF-1.4")
+    assert all(p.is_dir() for p in made)
+    ws.close()
+    assert not any(p.exists() for p in made)
+    ws.close()  # 2度呼んでもよい

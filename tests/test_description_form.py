@@ -8,24 +8,11 @@ import pytest
 from fixtures.generate_fixtures import make_multipage_pdf
 
 
-def _window(tmp_path, monkeypatch):
-    pytest.importorskip("tkinter")
-    import tkinter as tk
-
-    from mints_prep.ui.app import MainWindow
-
-    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))  # 本物の設定ファイルを汚さない
-    try:
-        return MainWindow()
-    except tk.TclError as exc:
-        pytest.skip(f"画面がない環境（{exc}）")
-
-
 def _load(app, folder: Path) -> None:
     """［ファイルを読み込み］と同じ状態にする（裏の読み込みを待たずに）。"""
-    from mints_prep.processors.updater import Manifest
-    from mints_prep.scanner.walker import scan_folder
-    from mints_prep.ui.workspace import Workspace
+    from va_mints.processors.updater import Manifest
+    from va_mints.scanner.walker import scan_folder
+    from va_mints.ui.workspace import Workspace
 
     result = scan_folder(folder, app.config_obj)
     app._scan_result = result
@@ -43,12 +30,11 @@ def _select(app, name: str) -> None:
     app.update()
 
 
-def test_create_shows_form_and_saves_input(tmp_path: Path, monkeypatch):
+def test_create_shows_form_and_saves_input(tmp_path: Path, monkeypatch, app):
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
     make_multipage_pdf(folder / "原告準備書面1.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -107,7 +93,7 @@ def test_create_shows_form_and_saves_input(tmp_path: Path, monkeypatch):
         _select(app, "甲001 契約書.pdf")  # 名前の変更は下書きだったので、読み込み直すと元の名前
         assert app._description_active and "立証趣旨" in _texts(app)
     finally:
-        app.destroy()
+        app.withdraw()
 
 
 def _texts(app) -> list[str]:
@@ -120,15 +106,14 @@ def _texts(app) -> list[str]:
     return [w.cget("text") for w in walk(app._options_frame) if w.winfo_class() in ("TLabel", "Label")]
 
 
-def test_header_is_entered_on_the_made_pdf(tmp_path: Path, monkeypatch):
+def test_header_is_entered_on_the_made_pdf(tmp_path: Path, monkeypatch, app):
     """頭書（裁判所・事件番号など）は、作った証拠説明書の PDF を選んだときに入れる（各証拠の入力欄には
     出さない。2026-11-18 班長指示）。"""
-    from mints_prep.ui.workspace import apply_all_updates
+    from va_mints.ui.workspace import apply_all_updates
 
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -147,16 +132,15 @@ def test_header_is_entered_on_the_made_pdf(tmp_path: Path, monkeypatch):
         app._save_header("court", "東京地方裁判所")
         assert app._workspace.description.header.court == "東京地方裁判所"
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_wheel_over_text_scrolls_the_pane(tmp_path: Path, monkeypatch):
+def test_wheel_over_text_scrolls_the_pane(tmp_path: Path, monkeypatch, app):
     """複数行の欄の上のホイール：欄の中に隠れた行がなければ、右ペインを送る（2026-11-18。欄の上で
     右ペインが動かなかった）。隠れた行があれば、欄の中を送る。"""
     import tkinter as tk
     from types import SimpleNamespace
 
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         sent = []
@@ -184,16 +168,15 @@ def test_wheel_over_text_scrolls_the_pane(tmp_path: Path, monkeypatch):
         app._text_wheel(SimpleNamespace(widget=text, delta=120))
         assert sent == [-120, 120]
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_create_makes_the_pdf_and_lists_it(tmp_path: Path, monkeypatch):
+def test_create_makes_the_pdf_and_lists_it(tmp_path: Path, monkeypatch, app):
     """［作成］を押すと、証拠説明書の PDF を作り、左の一覧に出す。入力を変えると、
     少し待ってから作り直す（2026-11-18 班長指示）。"""
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -214,21 +197,20 @@ def test_create_makes_the_pdf_and_lists_it(tmp_path: Path, monkeypatch):
         assert pdf.stat().st_mtime_ns != before
         assert app._current.path == pdf  # 見ていた PDF を選んだまま
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_click_on_header_scrolls_to_top(tmp_path: Path, monkeypatch):
+def test_click_on_header_scrolls_to_top(tmp_path: Path, monkeypatch, app):
     """証拠説明書の PDF のプレビューで、頭書（1ページ目の表より上）をクリックすると、右のペインを先頭へ、
     行をクリックすると、その行の入力欄へ送る（2026-11-18 班長指示）。"""
     from types import SimpleNamespace
 
-    from mints_prep.ui.description_sync import label_positions
+    from va_mints.ui.description_sync import label_positions
 
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
     make_multipage_pdf(folder / "甲002 領収書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -254,20 +236,19 @@ def test_click_on_header_scrolls_to_top(tmp_path: Path, monkeypatch):
         click(found[1][0] + 2)  # 甲002 の行
         assert len(moved) == 2
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_delete_key_on_description_moves_folder(tmp_path: Path, monkeypatch):
+def test_delete_key_on_description_moves_folder(tmp_path: Path, monkeypatch, app):
     """一覧で証拠説明書の PDF を選んで［削除］：確認のうえ、フォルダごと消し、［作成］がまた押せる。"""
     import shutil
     from tkinter import messagebox
 
-    from mints_prep.ui import platform_support
+    from va_mints.ui import platform_support
 
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -291,10 +272,10 @@ def test_delete_key_on_description_moves_folder(tmp_path: Path, monkeypatch):
         assert all(r.path.name != "証拠説明書.pdf" for r in app._workspace.records)
         assert app._current is not None and app._current.path.name == "甲001 契約書.pdf"
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_title_commits_while_typing_and_f5_syncs(tmp_path: Path, monkeypatch):
+def test_title_commits_while_typing_and_f5_syncs(tmp_path: Path, monkeypatch, app):
     """標目は、欄を離れなくても、字を入れ終えて少し待つと確定する（2026-11-18。プレビューの上を
     クリックしても確定せず、PDF に反映されなかった）。F5 で、待っている保存をすぐ行い、PDF を最新にする。"""
     import pdfplumber
@@ -302,7 +283,6 @@ def test_title_commits_while_typing_and_f5_syncs(tmp_path: Path, monkeypatch):
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -325,10 +305,10 @@ def test_title_commits_while_typing_and_f5_syncs(tmp_path: Path, monkeypatch):
             assert "売買契約書" in (pdf.pages[0].extract_text() or "").replace(" ", "")
         assert app._current.path.name == "甲001 契約書.pdf"  # 選んでいるファイルは、そのまま
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_header_fields_one_after_another_reach_the_pdf(tmp_path: Path, monkeypatch):
+def test_header_fields_one_after_another_reach_the_pdf(tmp_path: Path, monkeypatch, app):
     """頭書の欄を続けて入れても（裁判所 → 作り直し → 事件番号）、両方が保存され、PDF に入る
     （2026-11-18 班長の報告。「裁判所」の後の欄が PDF に入らなかった。入力の流れを1本にした）。"""
     import gc
@@ -338,7 +318,6 @@ def test_header_fields_one_after_another_reach_the_pdf(tmp_path: Path, monkeypat
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -367,17 +346,16 @@ def test_header_fields_one_after_another_reach_the_pdf(tmp_path: Path, monkeypat
             first = (pdf.pages[0].extract_text() or "").split("\n")[0]
         assert "東京地方裁判所" in first and "令和8年（ワ）第123号" in first
     finally:
-        app.destroy()
+        app.withdraw()
 
 
-def test_preview_follows_the_pdf_after_its_number_changes(tmp_path: Path, monkeypatch):
+def test_preview_follows_the_pdf_after_its_number_changes(tmp_path: Path, monkeypatch, app):
     """証拠説明書の番号を入れて PDF の名前が変わっても（「証拠説明書（1）.pdf」）、その後に入れた頭書が
     プレビューに入る（2026-11-18 班長の報告。番号を入れた後は、F5 を押すまで描き直されなかった。
     作り直した後では、見ていた古い名前のファイルが証拠説明書の PDF と分からなくなっていた）。"""
     folder = tmp_path / "証拠"
     folder.mkdir()
     make_multipage_pdf(folder / "甲001 契約書.pdf", 1)
-    app = _window(tmp_path, monkeypatch)
     try:
         app.withdraw()
         _load(app, folder)
@@ -410,4 +388,4 @@ def test_preview_follows_the_pdf_after_its_number_changes(tmp_path: Path, monkey
         app._sync_description()
         assert redrawn == [renamed]  # 番号を入れた後の欄も、プレビューを描き直す
     finally:
-        app.destroy()
+        app.withdraw()

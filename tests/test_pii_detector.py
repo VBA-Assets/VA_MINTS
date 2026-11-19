@@ -1,12 +1,12 @@
 from pathlib import Path
 
 from fixtures.generate_fixtures import make_pdf_with_text
-from mints_prep.detectors.pii_detector import (
+from va_mints.detectors.pii_detector import (
     detect_pii_in_filename,
     detect_pii_in_pdf_text,
     merge_pii_findings,
 )
-from mints_prep.models import PiiFinding
+from va_mints.models import PiiFinding
 
 
 def test_filename_email_detected(config):

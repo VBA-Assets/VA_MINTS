@@ -7,7 +7,7 @@ from fixtures.generate_fixtures import (
     make_image_with_metadata,
     make_image_without_metadata,
 )
-from mints_prep.detectors.metadata_detector import detect_metadata
+from va_mints.detectors.metadata_detector import detect_metadata
 
 
 def test_pdf_with_metadata_detected(tmp_path: Path):

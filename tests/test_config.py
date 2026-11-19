@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from mints_prep.config import DEFAULT_CONFIG_PATH, load_config
+from va_mints.config import DEFAULT_CONFIG_PATH, load_config
 
 
 def _write_modified_config(tmp_path: Path, mutate) -> Path:
@@ -118,3 +118,21 @@ def test_non_integer_digits_rejected(tmp_path: Path):
     p = _write_modified_config(tmp_path, mutate)
     with pytest.raises(ValueError, match="digits"):
         load_config(p)
+
+
+def test_old_config_with_logging_section_still_loads(tmp_path: Path):
+    """Ver310 までの config.yaml（使っていなかった logging の節がある）も読める（インストーラーは、利用者が
+    直したかもしれない config.yaml を上書きしないため、古いものが残る）。"""
+    def mutate(raw):
+        raw["logging"] = {"log_dir": "logs", "level": "INFO"}
+
+    assert load_config(_write_modified_config(tmp_path, mutate)) is not None
+
+
+def test_yaml_error_names_the_line_without_library_text(tmp_path: Path):
+    """YAML の誤りは、何行目かを日本語で示し、部品（PyYAML）の英語の文は出さない。"""
+    p = tmp_path / "config.yaml"
+    p.write_bytes(b"upload:\n  max_total_mb: 200\n  safety_margin_ratio: '0.9\n")
+    with pytest.raises(ValueError) as info:
+        load_config(p)
+    assert "行目" in str(info.value) and "while" not in str(info.value) and "scanning" not in str(info.value)

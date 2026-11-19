@@ -1,5 +1,5 @@
-from mints_prep.models import Classification, FilenameFinding, FormatStatus, PdfFinding
-from mints_prep.scanner.classifier import classify
+from va_mints.models import Classification, FilenameFinding, FormatStatus, PdfFinding
+from va_mints.scanner.classifier import classify
 
 _OK_FILENAME = FilenameFinding(length=10, exceeds_max_length=False, exceeds_warning_length=False)
 

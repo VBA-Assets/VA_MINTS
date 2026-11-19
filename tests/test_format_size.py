@@ -4,7 +4,7 @@ import pytest
 
 pytest.importorskip("tkinter")
 
-from mints_prep.ui.app import _format_size  # noqa: E402
+from va_mints.ui.app import _format_size  # noqa: E402
 
 
 def test_format_size():

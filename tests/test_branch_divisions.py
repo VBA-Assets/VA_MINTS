@@ -7,10 +7,10 @@ import pdfplumber
 import pytest
 
 from fixtures.generate_fixtures import make_multipage_pdf
-from mints_prep.naming.evidence_number import name_with_evidence
-from mints_prep.processors.updater import Manifest, restore_all
-from mints_prep.scanner.walker import scan_folder
-from mints_prep.ui.workspace import apply_all_updates, Workspace
+from va_mints.naming.evidence_number import name_with_evidence
+from va_mints.processors.updater import Manifest, restore_all
+from va_mints.scanner.walker import scan_folder
+from va_mints.ui.workspace import apply_all_updates, Workspace
 
 
 def _ws(root: Path, config) -> Workspace:

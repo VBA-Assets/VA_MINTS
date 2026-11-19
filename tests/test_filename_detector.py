@@ -1,4 +1,4 @@
-from mints_prep.detectors.filename_detector import check_filename
+from va_mints.detectors.filename_detector import check_filename
 
 
 def test_ok_filename(config):

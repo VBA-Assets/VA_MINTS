@@ -12,8 +12,8 @@ from fixtures.generate_fixtures import (
     make_permission_restricted_pdf,
     make_unsupported_file,
 )
-from mints_prep.models import Classification
-from mints_prep.scanner.walker import scan_folder
+from va_mints.models import Classification
+from va_mints.scanner.walker import scan_folder
 
 
 def test_scan_folder_classifies_all_files(tmp_path: Path, config):

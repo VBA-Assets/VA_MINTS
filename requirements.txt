@@ -18,7 +18,7 @@ Pillow>=10.0
 # PDF：プレビュー（ページを画像にする）・隠した所の下の文字の検査。Google の PDFium（Apache・BSD）
 pypdfium2>=4.0
 
-# 音声・動画のタグは、ライブラリを使わず自前で読む（src/mints_prep/detectors/av_tags.py）。
+# 音声・動画のタグは、ライブラリを使わず自前で読む（src/va_mints/detectors/av_tags.py）。
 # Ver201 まで使っていた mutagen は、ライセンス（GPL-2.0-or-later）が VA mints の MIT License と
 # 合わないので、2026-11-17 に外した（班長決定）。配るものに入る部品は、MIT License と両立する
 # もの（MIT・BSD・Apache・MPL など）だけにすること。部品を足したら scripts\make_notices.py にも足す。
@@ -39,9 +39,8 @@ PyYAML>=6.0
 # テスト
 pytest>=8.0
 
-# 実行ファイル化（配布用。Python環境を持たない利用者向け。CLAUDE.md「配布形態に
-# 関する留意」参照）。ビルド方法：.venv\Scripts\pyinstaller.exe mints_prep.spec
+# 実行ファイル化（配布用。Python環境を持たない利用者向け）。ビルド方法：.venv\Scripts\pyinstaller.exe va_mints.spec
 # 生成物 dist\VA_mints.exe と config.yaml を同じフォルダに配置して配布する
 # （config.yamlは実行ファイルに埋め込まず外部ファイルとし、再ビルドなしに
-# 数値パラメータを編集できるようにしている。src/mints_prep/config.py参照）。
+# 数値パラメータを編集できるようにしている。src/va_mints/config.py参照）。
 pyinstaller>=6.0

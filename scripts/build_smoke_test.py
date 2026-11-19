@@ -5,9 +5,9 @@ pikepdf（qpdf DLL）・pdfplumber等のリソース依存機能を正しく実�
 PDFスタンプ・メタデータ除去・プレビュー生成を実行する。
 
 使い方：
-    .venv\\Scripts\\pyinstaller.exe --onefile --name mints_prep_smoketest ^
+    .venv\\Scripts\\pyinstaller.exe --onefile --name va_mints_smoketest ^
         --paths src scripts\\build_smoke_test.py
-    dist\\mints_prep_smoketest.exe を実行し、末尾に
+    dist\\va_mints_smoketest.exe を実行し、末尾に
     "ALL CHECKS PASSED" と表示されることを確認する。
 """
 
@@ -26,11 +26,11 @@ def main() -> int:
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas
 
-        from mints_prep.config import EvidenceStampConfig
-        from mints_prep.processors.evidence_stamp import stamp_pdf
-        from mints_prep.processors.metadata_remover import strip_pdf_metadata
-        from mints_prep.ui.preview import render_preview
-        from mints_prep.models import Classification, FileRecord, FilenameFinding, FormatStatus
+        from va_mints.config import EvidenceStampConfig
+        from va_mints.processors.evidence_stamp import stamp_pdf
+        from va_mints.processors.metadata_remover import strip_pdf_metadata
+        from va_mints.ui.preview import render_preview
+        from va_mints.models import Classification, FileRecord, FilenameFinding, FormatStatus
 
         work_dir = Path(sys.executable).resolve().parent / "_smoke_work"
         work_dir.mkdir(exist_ok=True)

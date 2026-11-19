@@ -14,11 +14,11 @@ import pytest
 from PIL import Image
 
 from fixtures.generate_fixtures import make_image_without_metadata
-from mints_prep.config import EvidenceStampConfig
-from mints_prep.detectors.filename_detector import check_filename
-from mints_prep.processors import evidence_stamp
-from mints_prep.processors.filename_sanitizer import sanitize_filename
-from mints_prep.ui import platform_support
+from va_mints.config import EvidenceStampConfig
+from va_mints.detectors.filename_detector import check_filename
+from va_mints.processors import evidence_stamp
+from va_mints.processors.filename_sanitizer import sanitize_filename
+from va_mints.ui import platform_support
 
 _CONFIG = EvidenceStampConfig(font_size_pt=10, margin_top_mm=8, margin_right_mm=8)
 _WINDOWS_FONT = Path(r"C:\Windows\Fonts\msgothic.ttc")

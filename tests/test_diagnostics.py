@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from mints_prep import __version__, diagnostics
+from va_mints import VERSION_LABEL, diagnostics
 
 
 def _raise_with_secret():
@@ -48,7 +48,7 @@ def test_error_log_persists_and_caps(tmp_path):
         try:
             raise ValueError(f"誤り {i}")
         except ValueError as exc:
-            log.record(exc, "試験")
+            log.record(exc, f"試験 {i}")
     assert len(log.records) == diagnostics.KEEP_ERRORS                   # 上限で古いものから消える
     reloaded = diagnostics.ErrorLog(path)                                # 別の起動でも読み戻せる
     assert len(reloaded.records) == diagnostics.KEEP_ERRORS
@@ -63,19 +63,9 @@ def test_error_log_survives_broken_file(tmp_path):
     assert diagnostics.ErrorLog(path).records == []                      # 壊れていても起動を妨げない
 
 
-def test_diagnostic_text_has_no_file_names(tmp_path):
+def test_diagnostic_text_has_no_file_names(tmp_path, app):
     """画面の診断情報の文に、フォルダの場所・ファイル名が入らないこと。"""
-    pytest.importorskip("tkinter")
-    import tkinter as tk
-
-    from mints_prep.ui.app import MainWindow
-
     try:
-        app = MainWindow()
-    except tk.TclError:
-        pytest.skip("画面がない環境")
-    try:
-        app.withdraw()
         app._errors = diagnostics.ErrorLog(tmp_path / "errors.json")     # 本物の記録ファイルを汚さない
         secret_dir = tmp_path / "秘密の事件フォルダ"
         secret_dir.mkdir()
@@ -85,9 +75,9 @@ def test_diagnostic_text_has_no_file_names(tmp_path):
         except OSError as exc:
             app._errors.record(exc, "書き出し")
         text = app._diagnostic_text()
-        assert __version__ in text and "PermissionError" in text
+        assert VERSION_LABEL in text and "PermissionError" in text
         assert "対象フォルダの欄：設定あり（フォルダがある）" in text
         assert "秘密" not in text and "甲001" not in text                # 場所・ファイル名・本文は入らない
         assert str(tmp_path) not in text
     finally:
-        app.destroy()
+        app.withdraw()
